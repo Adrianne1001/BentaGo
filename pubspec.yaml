@@ -1,0 +1,38 @@
+name: bentago
+description: Sales tracker for a sari-sari store. Works fully offline, no account needed.
+publish_to: "none"
+version: 1.0.0+1
+
+# Color.withValues() needs Dart 3.6 / Flutter 3.27, and ThemeData.cardTheme
+# takes CardThemeData from Flutter 3.29 onward. Both are used below.
+environment:
+  sdk: ">=3.6.0 <4.0.0"
+  flutter: ">=3.29.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # State
+  flutter_riverpod: ^2.5.1
+
+  # Local database (the whole backend)
+  sqflite: ^2.3.3
+  sqflite_common_ffi: ^2.3.3 # lets you run on Windows desktop for quick testing
+  path: ^1.9.0
+  path_provider: ^2.1.4
+
+  # Formatting
+  intl: ^0.19.0
+
+  # Backup export / restore
+  share_plus: ^10.0.0
+  file_picker: ^8.0.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
+
+flutter:
+  uses-material-design: true
