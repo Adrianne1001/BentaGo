@@ -1,0 +1,130 @@
+# Publishes the installables in dist/ as a GitHub Release on every push to main.
+#
+# The artifacts are NOT built here. They are built on the dev machine by
+# tool\release.ps1, which gates on `flutter analyze` and `flutter test` and
+# signs the APK with the real release keystore. A GitHub runner has no keystore,
+# so anything it built would carry the debug key and could not install over an
+# existing BentaGo without an uninstall -- which deletes the store's data.
+#
+# The tag is v<version> read from pubspec.yaml. Pushing again without bumping
+# the version replaces that release's assets in place instead of failing, so
+# ordinary pushes never break the workflow. Bump the version to get a new
+# release: tool\release.ps1 -BumpBuild, or edit pubspec.yaml.
+
+name: Release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+# Let pushes queue rather than cancel: a cancelled run can leave a release
+# holding a half-uploaded asset.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read version from pubspec.yaml
+        id: v
+        run: |
+          set -euo pipefail
+          line=$(tr -d '\r' < pubspec.yaml | grep -m1 -E '^version:' || true)
+          if [[ ! $line =~ ^version:[[:space:]]*([0-9]+\.[0-9]+\.[0-9]+)\+([0-9]+)[[:space:]]*$ ]]; then
+            echo "::error::Expected a 'version: X.Y.Z+N' line in pubspec.yaml, found: '${line}'"
+            exit 1
+          fi
+          echo "version=${BASH_REMATCH[1]}" >> "$GITHUB_OUTPUT"
+          echo "build=${BASH_REMATCH[2]}" >> "$GITHUB_OUTPUT"
+          echo "tag=v${BASH_REMATCH[1]}" >> "$GITHUB_OUTPUT"
+          echo "BentaGo ${BASH_REMATCH[1]} (build ${BASH_REMATCH[2]})"
+
+      # Catches the "bumped the version but forgot to rebuild" case. It cannot
+      # catch a dist/ that is stale at the *same* version -- only rerunning
+      # release.ps1 can.
+      - name: Check dist/ matches that version
+        env:
+          VERSION: ${{ steps.v.outputs.version }}
+        run: |
+          set -euo pipefail
+          missing=0
+          for f in "BentaGo-Setup-$VERSION.exe" \
+                   "BentaGo-$VERSION-arm64.apk" \
+                   "BentaGo-$VERSION-arm32.apk" \
+                   "BentaGo-$VERSION-universal.apk"; do
+            if [[ -f "dist/$f" ]]; then
+              printf '  %-32s %s\n' "$f" "$(du -h "dist/$f" | cut -f1)"
+            else
+              echo "::error::dist/$f is missing"
+              missing=1
+            fi
+          done
+          if (( missing )); then
+            echo "dist/ currently holds:"
+            ls -1 dist/ 2>/dev/null || echo "  (no dist/ directory)"
+            echo "::error::dist/ does not match pubspec.yaml version $VERSION. Run 'powershell -ExecutionPolicy Bypass -File tool\release.ps1' and commit the refreshed dist/ files."
+            exit 1
+          fi
+
+      - name: Create or update the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.v.outputs.tag }}
+          VERSION: ${{ steps.v.outputs.version }}
+          BUILD: ${{ steps.v.outputs.build }}
+        run: |
+          set -euo pipefail
+
+          # The release always describes the current main, so the tag moves with
+          # it when the version has not changed.
+          git tag -f "$TAG" "$GITHUB_SHA"
+          git push -f origin "refs/tags/$TAG"
+
+          notes=$(mktemp)
+          cat > "$notes" <<EOF
+          BentaGo $VERSION (build $BUILD) — built from \`${GITHUB_SHA:0:7}\`
+
+          | File | For |
+          | --- | --- |
+          | \`BentaGo-Setup-$VERSION.exe\` | **Windows** — installs for the current user, no admin prompt |
+          | \`BentaGo-$VERSION-arm64.apk\` | **Android**, any phone from roughly 2016 on. Smallest. Use this one. |
+          | \`BentaGo-$VERSION-arm32.apk\` | Older 32-bit Android phones |
+          | \`BentaGo-$VERSION-universal.apk\` | Works on any phone, three times the size. Only if the others refuse to install. |
+
+          Copy the APK to the phone, tap it, and allow "install from unknown
+          sources" when Android asks. That prompt appears once.
+
+          Unsure which APK? Install \`arm64\`. If Android says the package is not
+          compatible, use \`arm32\`.
+          EOF
+
+          assets=(
+            "dist/BentaGo-Setup-$VERSION.exe"
+            "dist/BentaGo-$VERSION-arm64.apk"
+            "dist/BentaGo-$VERSION-arm32.apk"
+            "dist/BentaGo-$VERSION-universal.apk"
+          )
+
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG exists — replacing its assets"
+            gh release edit "$TAG" --title "BentaGo $VERSION" --notes-file "$notes"
+            gh release upload "$TAG" "${assets[@]}" --clobber
+          else
+            echo "Creating release $TAG"
+            gh release create "$TAG" "${assets[@]}" \
+              --title "BentaGo $VERSION" --notes-file "$notes"
+          fi
+
+          {
+            echo "### Released [BentaGo $VERSION]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/releases/tag/$TAG)"
+            echo
+            echo "Build $BUILD, from \`${GITHUB_SHA:0:7}\`."
+          } >> "$GITHUB_STEP_SUMMARY"
