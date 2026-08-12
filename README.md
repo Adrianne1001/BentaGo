@@ -7,10 +7,14 @@ device.
 Interface is in **English**. Product names stay Filipino, because that is what
 is printed on the packet and what a customer asks for.
 
-**No inventory tracking.** A product is a name, a price and optionally a cost.
-The app never claims to know what is on the shelf, so nothing can drift out of
-step with reality. Adding a product needs a **name and a price**; everything
-else is optional.
+**No inventory tracking.** A product is a name, a cost and a price. The app
+never claims to know what is on the shelf, so nothing can drift out of step with
+reality.
+
+**Prices are worked out, not typed.** Adding a product asks for a **name, a cost
+per piece and a markup**, in that order, and fills in the selling price. The
+pencil beside the price hands control back when a round number is wanted, and
+then the markup follows the price instead of driving it.
 
 ---
 
@@ -34,12 +38,14 @@ compatible, use `arm32`.
 ## Status
 
 Builds and runs on Windows and Android. `flutter analyze` is clean and the test
-suite passes (**61 tests**, `flutter test`).
+suite passes (**114 tests**, `flutter test`).
 
 Verified working: fresh-install seeding, the v1→v3 schema migrations against a
 real database on disk, recording cash and credit sales, cancelling a sale with
-the credit reversed, custom categories, period summaries for day/week/month, and
-the automatic monthly backup firing on first launch.
+the credit reversed, correcting a line quantity with the customer's tab moved to
+match, custom categories, period summaries for day/week/month/quarter/year,
+Excel and PDF report export read back from the written file, and the automatic
+monthly backup firing on first launch.
 
 Toolchain used: Flutter 3.44.9 / Dart 3.12.2 (`C:\src\flutter`), JDK 17,
 Android SDK 36 (`C:\Android\sdk`), Visual Studio 2026 with the C++ desktop
@@ -51,12 +57,13 @@ workload, Inno Setup 6.7.
 
 | Tab | File | What it does |
 | --- | --- | --- |
-| **Sell** | [sell_screen.dart](lib/screens/sell_screen.dart) | Opens here. Tap products, pick Cash / Credit / GCash, `Done`. Undo via snackbar for 8 seconds. |
+| **Sell** | [sell_screen.dart](lib/screens/sell_screen.dart) | Opens here. Tap products, pick Cash / Credit / GCash, `Done`. Confirms and moves on — corrections happen in Records. |
 | **Dashboard** | [dashboard_screen.dart](lib/screens/dashboard_screen.dart) | Today's sales / profit / cash, 7-day chart, payment mix, best sellers, credit outstanding, backup age. |
 | **Products** | [products_screen.dart](lib/screens/products_screen.dart) | The product register. Toggle top-right switches between a touch list and a table of prices and margins. |
 | **Credit** | [credit_screen.dart](lib/screens/credit_screen.dart) | The *listahan*, biggest debt first. Per-customer ledger with payments. |
-| **Reports** | [reports_screen.dart](lib/screens/reports_screen.dart) | Day / week / month, arrows to step back. Charts, best and slow movers, categories, expenses. |
-| Records | [sales_table_screen.dart](lib/screens/sales_table_screen.dart) | Every transaction as a filterable, sortable table. Tap a row for its line items; cancel from there. |
+| **Reports** | [reports_screen.dart](lib/screens/reports_screen.dart) | Day / week / month, arrows to step back. Charts, best and slow movers, categories, expenses. Share icon exports. |
+| Records | [sales_table_screen.dart](lib/screens/sales_table_screen.dart) | Every transaction as a filterable, sortable table. Tap a row for its line items, then a line to fix its quantity or take it off; cancel the whole sale from there too. |
+| Export | [export_report_screen.dart](lib/screens/export_report_screen.dart) | Pick a range and a file type, see the totals before writing, share the file. |
 | Categories | [category_manager.dart](lib/screens/category_manager.dart) | Rename or remove categories. |
 | Settings | [settings_screen.dart](lib/screens/settings_screen.dart) | Backup, restore, CSV share. |
 
@@ -80,14 +87,15 @@ Fresh, Other).
 ```
 lib/
   core/       theme (light + dark), peso and date formatting, Period
-  data/       SQLite schema, models, one repository per area, backup service
+  data/       SQLite schema, models, one repository per area,
+              backup service, report export (xlsx + pdf)
   state/      Riverpod providers, sell-screen cart
   widgets/    stat tiles, hand-painted charts, shared form pieces
   screens/    one file per screen
 tool/         inspect_db.dart — dump a database's schema and row counts
 ```
 
-Three decisions the rest of the code leans on:
+Four decisions the rest of the code leans on:
 
 - **Money is always an `int` of centavos.** Never a `double`. `Money.format`
   and `Money.parse` in [core/format.dart](lib/core/format.dart) are the only
@@ -97,7 +105,11 @@ Three decisions the rest of the code leans on:
   offset.
 - **`sale_items` snapshots unit price *and* unit cost.** Reports never join
   back to the live product price — otherwise raising a price would silently
-  rewrite last month's profit.
+  rewrite last month's profit. Correcting a past sale's quantity re-totals it
+  from that snapshot too, so a price change today cannot reach backwards.
+- **The ledger is append-only.** Cancelling a sale or correcting its quantity
+  writes an adjusting entry rather than editing or deleting the original, so a
+  customer's tab always reads as a list of things that happened.
 
 ## Reports vocabulary
 
@@ -110,6 +122,55 @@ They differ in any store that runs a tab. **Profit** is revenue minus the cost
 of what was sold; **Net profit** subtracts expenses too. Where products have no
 cost price on file, the app labels the profit figure as an estimate rather than
 presenting it as fact.
+
+**Markup and margin are not the same number**, and the app never uses one word
+for both:
+
+- **Markup** — profit over the **cost**. What the product form asks for, because
+  it is how buying works: paid ₱14, add 20%, sell at ₱16.80.
+- **Margin** — profit over the **price**. What every report shows, because it is
+  the figure that composes with revenue: 20% margin on ₱1,000 of sales is ₱200.
+
+The same product is a 21.4% markup and a 17.6% margin at ₱14 cost / ₱17 price.
+The product form prints both under the price so the two can never be read as one.
+
+---
+
+## Reports out of the app
+
+Reports → the share icon. Two choices and a button:
+
+1. **What to cover** — `Day`, `Month`, `Quarter`, `Year` or `Start–end`, then the
+   arrows step through them. Picking the size first and stepping second means any
+   month or quarter is two taps and no date picker; `Start–end` opens one for an
+   arbitrary span.
+2. **File type** — **Excel** (`.xlsx`) or **PDF**.
+
+Before anything is written the screen shows the gross sales, profit, line count
+and transaction count for the chosen range, so an empty month is obvious *before*
+the file is opened rather than after.
+
+The report is a **flat table of every line sold** — one row per product per sale,
+not one row per transaction — with gross sales and profit per line, under the
+period and the two totals. Cancelled sales and lines taken off a sale are absent
+entirely. Files land in `BentaGo/Reports/` next to the backups and the share
+sheet opens on them.
+
+In the Excel file, money is written as **numbers rather than text**, so the sheet
+can be re-totalled, sorted and pivoted. That is the whole reason it exists
+alongside the CSV the backup already writes.
+
+Two constraints worth knowing, both from the PDF writer having only the 14
+standard PDF fonts:
+
+- Figures carry **no peso sign** — U+20B1 has no glyph in WinAnsi — so the money
+  columns are plain numbers under a `PHP` heading.
+- Text is folded to ASCII on the way in (`pdfSafe` in
+  [export_service.dart](lib/data/export_service.dart)): an en dash becomes a
+  hyphen, curly quotes straighten, and anything past Latin-1 in a product name
+  becomes `?`. Without it the writer drops the character silently. Embedding a
+  Unicode font is the alternative, at roughly half a megabyte of APK for a
+  handful of characters that have fine stand-ins.
 
 ---
 
@@ -125,7 +186,9 @@ Android/data/ph.bentago.bentago/files/BentaGo/Backups/
     before-restore/   safety copy taken before each restore (keeps 3)
 ```
 
-On Windows the same tree sits under `Documents\BentaGo\Backups\`.
+On Windows the same tree sits under `Documents\BentaGo\Backups\`. Exported
+reports go to `BentaGo/Reports/` beside it, and are not pruned — they are
+generated on demand, not on a schedule.
 
 **Automatic** — one backup per calendar month, written on the first app launch
 in that month. Deliberately not a background job: budget Android phones kill
@@ -165,6 +228,17 @@ an obviously stale one. Then it clears the old artifacts, builds Windows and
 Android (sequentially: they share `build/`, and running them together corrupts
 the Kotlin incremental cache), compiles the installer, stages everything into
 `dist/`, and verifies the APK signature. Roughly five minutes.
+
+Two traps when running that script from somewhere other than an interactive
+prompt:
+
+- **Do not pipe it through `2>&1`.** Windows PowerShell wraps a native command's
+  stderr in error records, so the harmless `share_plus` KGP warning below becomes
+  a `NativeCommandError`, and `$ErrorActionPreference = 'Stop'` kills the script
+  in the middle of the Android build. Nothing has actually failed.
+- **Keep `pubspec.yaml` ASCII-only.** `-BumpBuild` rewrites the whole file, and
+  the read/write round trip mangles non-ASCII bytes — a `₱` in a comment comes
+  back as `â‚±`.
 
 Add `-BumpBuild` to increment the `+N` build number in `pubspec.yaml` first.
 Android needs an increasing build number only to *publish* an update; installing
@@ -231,8 +305,15 @@ when that lands, upgrade share_plus to a built-in-Kotlin version.
 ## Things deliberately left out
 
 - **Inventory / stock counts** — removed on request. No stock column, no
-  reorder alerts, no stock-movement ledger. Cost prices stay, because they feed
-  profit rather than stock.
+  reorder alerts, no stock-movement ledger. Cost prices stay, and are now
+  required, because they feed pricing and profit rather than stock.
+- **Undo on the sell screen** — removed on request. A snackbar action sitting
+  over the product grid is one mis-tap away from silently reversing a sale that
+  was correct, and the window closes before anyone notices. Corrections live in
+  Records, where the sale can be read back before it is changed.
+- **Editing what a past sale charged** — a line's quantity can be fixed and a
+  line can be taken off, but the price it sold at is fixed. A sale that can be
+  re-priced after the fact is a sale whose history cannot be trusted.
 - **Per-pack pricing** — `unit_label` is free text (`pc`, `sachet`, `bote`) but
   there is only ever one unit per product.
 - **Product photos** — the emoji picker plus a colour-tinted initial covers

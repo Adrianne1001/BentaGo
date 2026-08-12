@@ -4,6 +4,7 @@ import '../core/period.dart';
 import '../data/app_database.dart';
 import '../data/backup_service.dart';
 import '../data/customer_repository.dart';
+import '../data/export_service.dart';
 import '../data/models.dart';
 import '../data/product_repository.dart';
 import '../data/report_repository.dart';
@@ -25,6 +26,8 @@ final reportRepositoryProvider =
     Provider((ref) => ReportRepository(ref.watch(databaseProvider)));
 final backupServiceProvider =
     Provider((ref) => BackupService(ref.watch(databaseProvider)));
+final exportServiceProvider =
+    Provider((ref) => ExportService(ref.watch(databaseProvider)));
 
 /// Bumped after every write. Read queries watch it, so recording a sale
 /// refreshes the dashboard, the product list and the reports at once without
@@ -187,6 +190,32 @@ final thisMonthSummaryProvider = FutureProvider<PeriodSummary>((ref) async {
   return ref
       .watch(reportRepositoryProvider)
       .summary(Period.of(PeriodKind.month, DateTime.now()));
+});
+
+// --- report export --------------------------------------------------------
+
+/// The range the export screen is about to write. Held here rather than in the
+/// screen so the preview and the writer cannot disagree about it.
+final exportPeriodProvider = StateProvider<Period>(
+  (ref) => Period.of(PeriodKind.month, DateTime.now()),
+);
+
+final exportFormatProvider =
+    StateProvider<ExportFormat>((ref) => ExportFormat.excel);
+
+/// Gathers the report the export screen is previewing -- the same query the
+/// writer runs, so the counts on screen are the counts that land in the file.
+final exportPreviewProvider =
+    FutureProvider.family<ReportData, Period>((ref, period) async {
+  ref.watch(dataVersionProvider);
+  return ref.watch(exportServiceProvider).gather(period);
+});
+
+/// Bounds the date-range picker: there is nothing to report on from before the
+/// first sale ever recorded.
+final firstSaleDateProvider = FutureProvider<DateTime?>((ref) async {
+  ref.watch(dataVersionProvider);
+  return ref.watch(reportRepositoryProvider).firstSaleDate();
 });
 
 // --- sales table ----------------------------------------------------------

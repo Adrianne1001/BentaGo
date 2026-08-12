@@ -66,9 +66,32 @@ class Product {
 
   bool get hasCost => costCentavos > 0;
 
+  /// Profit as a share of the **selling price**. This is what the Reports screen
+  /// and the products table mean by "margin", and it is the figure that composes
+  /// with revenue: a 20% margin on ₱1,000 of sales is ₱200 of profit.
   double? get marginPercent {
     if (priceCentavos <= 0 || !hasCost) return null;
     return marginCentavos / priceCentavos * 100;
+  }
+
+  /// Profit as a share of the **cost** -- what gets added on top of what the
+  /// store paid. This is the figure the product form asks for, because it is how
+  /// buying decisions are actually made ("I paid ₱14, I sell at ₱17").
+  ///
+  /// Deliberately a different number from [marginPercent] on the same product:
+  /// ₱14 cost at ₱17 is a 21.4% markup and an 17.6% margin. The form prints both
+  /// so the two can never be silently confused.
+  double? get markupPercent => markupFor(costCentavos, priceCentavos);
+
+  /// Selling price implied by a cost and a markup, rounded to the centavo.
+  static int priceFromMarkup(int costCentavos, double markupPercent) =>
+      (costCentavos * (1 + markupPercent / 100)).round();
+
+  /// The markup a chosen price implies. Null when there is no cost to mark up
+  /// from -- an undefined percentage, not a zero one.
+  static double? markupFor(int costCentavos, int priceCentavos) {
+    if (costCentavos <= 0) return null;
+    return (priceCentavos - costCentavos) / costCentavos * 100;
   }
 
   /// The letter shown on the tile when no emoji was chosen.

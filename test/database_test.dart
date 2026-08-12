@@ -1,16 +1,31 @@
 import 'dart:io';
 
+import 'package:bentago/core/format.dart';
 import 'package:bentago/core/period.dart';
 import 'package:bentago/data/app_database.dart';
 import 'package:bentago/data/backup_service.dart';
 import 'package:bentago/data/customer_repository.dart';
+import 'package:bentago/data/export_service.dart';
 import 'package:bentago/data/models.dart';
 import 'package:bentago/data/product_repository.dart';
 import 'package:bentago/data/report_repository.dart';
 import 'package:bentago/data/sales_repository.dart';
+import 'package:excel/excel.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 import 'package:sqflite/sqflite.dart';
+
+/// Reads a numeric cell back as a plain number. The excel package narrows a
+/// whole double to an int when decoding, so a test that cares about the value
+/// must not also care about which of the two wrappers carried it.
+num? numberAt(Sheet sheet, int column, int row) {
+  final value = sheet.rows[row][column]?.value;
+  return switch (value) {
+    IntCellValue() => value.value,
+    DoubleCellValue() => value.value,
+    _ => null,
+  };
+}
 
 /// Drives the real SQLite layer end to end: selling, credit, reports and
 /// backups. Runs against a temp database on disk rather than a mock, so the
@@ -355,6 +370,309 @@ void main() {
       await sales.voidSale(saleId);
 
       expect((await customers.byId(customerId))!.balanceCentavos, 0);
+    });
+  });
+
+  /// Corrections replace the undo that used to live on the sell screen. They
+  /// run against a recorded sale, so the invariant that matters is that the
+  /// price the item sold at is never revisited -- only how many of them.
+  group('correcting a sale', () {
+    Future<Product> item({
+      String name = 'Test item',
+      int price = 1000,
+      int cost = 700,
+    }) async {
+      final id = await products.insert(
+        Product(name: name, priceCentavos: price, costCentavos: cost),
+      );
+      return (await products.byId(id))!;
+    }
+
+    test('lowering a quantity re-totals the sale', () async {
+      final product = await item(price: 1000, cost: 700);
+      final saleId = await sales.recordSale(
+        lines: [CartLine(product: product, qty: 3)],
+        paymentType: PaymentType.cash,
+      );
+      final before = await sales.byId(saleId);
+
+      await sales.setSaleItemQty(
+        saleId: saleId,
+        itemId: before!.items.single.id!,
+        qty: 2,
+      );
+
+      final after = await sales.byId(saleId);
+      expect(after!.items.single.qty, 2);
+      expect(after.totalCentavos, 2000);
+      expect(after.costCentavos, 1400);
+      expect(after.profitCentavos, 600);
+      expect(after.voided, isFalse);
+    });
+
+    test('raising a quantity re-totals the sale', () async {
+      final product = await item(price: 1000, cost: 700);
+      final saleId = await sales.recordSale(
+        lines: [CartLine(product: product, qty: 1)],
+        paymentType: PaymentType.cash,
+      );
+      final before = await sales.byId(saleId);
+
+      await sales.setSaleItemQty(
+        saleId: saleId,
+        itemId: before!.items.single.id!,
+        qty: 4,
+      );
+
+      final after = await sales.byId(saleId);
+      expect(after!.totalCentavos, 4000);
+      expect(after.costCentavos, 2800);
+    });
+
+    test('the correction uses the recorded price, not the current one',
+        () async {
+      final product = await item(price: 1000, cost: 700);
+      final saleId = await sales.recordSale(
+        lines: [CartLine(product: product, qty: 3)],
+        paymentType: PaymentType.cash,
+      );
+      final before = await sales.byId(saleId);
+
+      // The shelf price triples after the sale was recorded.
+      await products.update(
+        product.copyWith(priceCentavos: 3000, costCentavos: 2100),
+      );
+
+      await sales.setSaleItemQty(
+        saleId: saleId,
+        itemId: before!.items.single.id!,
+        qty: 2,
+      );
+
+      final after = await sales.byId(saleId);
+      expect(after!.items.single.unitPriceCentavos, 1000);
+      expect(after.items.single.unitCostCentavos, 700);
+      // 2 at the price it actually sold for, not 2 at today's price.
+      expect(after.totalCentavos, 2000);
+      expect(after.costCentavos, 1400);
+    });
+
+    test('taking one line off a multi-line sale leaves the rest', () async {
+      final a = await item(name: 'Piattos', price: 2000, cost: 1700);
+      final b = await item(name: 'Coke', price: 2500, cost: 2150);
+      final saleId = await sales.recordSale(
+        lines: [
+          CartLine(product: a, qty: 2),
+          CartLine(product: b, qty: 1),
+        ],
+        paymentType: PaymentType.cash,
+      );
+      final before = await sales.byId(saleId);
+      final piattos =
+          before!.items.firstWhere((i) => i.productName == 'Piattos');
+
+      await sales.setSaleItemQty(
+        saleId: saleId,
+        itemId: piattos.id!,
+        qty: 0,
+      );
+
+      final after = await sales.byId(saleId);
+      expect(after!.items, hasLength(1));
+      expect(after.items.single.productName, 'Coke');
+      expect(after.totalCentavos, 2500);
+      expect(after.costCentavos, 2150);
+      expect(after.voided, isFalse);
+    });
+
+    test('taking off the last line cancels the sale and keeps the record',
+        () async {
+      final product = await item(price: 1000, cost: 700);
+      final saleId = await sales.recordSale(
+        lines: [CartLine(product: product, qty: 2)],
+        paymentType: PaymentType.cash,
+      );
+      final before = await sales.byId(saleId);
+
+      await sales.setSaleItemQty(
+        saleId: saleId,
+        itemId: before!.items.single.id!,
+        qty: 0,
+      );
+
+      final after = await sales.byId(saleId);
+      expect(after!.voided, isTrue);
+      // The line stays: a cancelled sale still says what was rung up.
+      expect(after.items, hasLength(1));
+
+      final summary = await reports.summary(Period.today());
+      expect(summary.revenueCentavos, 0);
+      expect(summary.saleCount, 0);
+    });
+
+    test('correcting a credit sale moves the customer balance to match',
+        () async {
+      final product = await item(price: 1000, cost: 700);
+      final customerId =
+          await customers.insert(const Customer(name: 'Aling Nena'));
+      final saleId = await sales.recordSale(
+        lines: [CartLine(product: product, qty: 3)],
+        paymentType: PaymentType.credit,
+        customerId: customerId,
+      );
+      expect((await customers.byId(customerId))!.balanceCentavos, 3000);
+
+      final before = await sales.byId(saleId);
+      await sales.setSaleItemQty(
+        saleId: saleId,
+        itemId: before!.items.single.id!,
+        qty: 1,
+      );
+
+      expect((await customers.byId(customerId))!.balanceCentavos, 1000);
+
+      // Appended, not rewritten -- the original charge is still on the ledger.
+      final ledger = await customers.ledger(customerId);
+      expect(ledger, hasLength(2));
+      expect(
+        ledger.map((e) => e.amountCentavos).toList()..sort(),
+        [-2000, 3000],
+      );
+    });
+
+    test('raising a credit quantity increases the balance', () async {
+      final product = await item(price: 1000, cost: 700);
+      final customerId =
+          await customers.insert(const Customer(name: 'Mang Tony'));
+      final saleId = await sales.recordSale(
+        lines: [CartLine(product: product, qty: 1)],
+        paymentType: PaymentType.credit,
+        customerId: customerId,
+      );
+
+      final before = await sales.byId(saleId);
+      await sales.setSaleItemQty(
+        saleId: saleId,
+        itemId: before!.items.single.id!,
+        qty: 3,
+      );
+
+      expect((await customers.byId(customerId))!.balanceCentavos, 3000);
+    });
+
+    test('cancelling the last line of a credit sale clears the whole tab',
+        () async {
+      final product = await item(price: 1000, cost: 700);
+      final customerId =
+          await customers.insert(const Customer(name: 'Aling Rosa'));
+      final saleId = await sales.recordSale(
+        lines: [CartLine(product: product, qty: 2)],
+        paymentType: PaymentType.credit,
+        customerId: customerId,
+      );
+
+      final before = await sales.byId(saleId);
+      await sales.setSaleItemQty(
+        saleId: saleId,
+        itemId: before!.items.single.id!,
+        qty: 0,
+      );
+
+      expect((await customers.byId(customerId))!.balanceCentavos, 0);
+      expect((await sales.byId(saleId))!.voided, isTrue);
+    });
+
+    test('the edit is stamped on the sale so a total can be explained',
+        () async {
+      final product = await item(name: 'Piattos', price: 2000, cost: 1700);
+      final saleId = await sales.recordSale(
+        lines: [CartLine(product: product, qty: 3)],
+        paymentType: PaymentType.cash,
+      );
+      final before = await sales.byId(saleId);
+
+      await sales.setSaleItemQty(
+        saleId: saleId,
+        itemId: before!.items.single.id!,
+        qty: 2,
+      );
+
+      final after = await sales.byId(saleId);
+      expect(after!.note, contains('Piattos 3→2'));
+      expect(after.note, contains('edited'));
+    });
+
+    test('setting the same quantity changes nothing at all', () async {
+      final product = await item(price: 1000, cost: 700);
+      final saleId = await sales.recordSale(
+        lines: [CartLine(product: product, qty: 2)],
+        paymentType: PaymentType.cash,
+      );
+      final before = await sales.byId(saleId);
+
+      await sales.setSaleItemQty(
+        saleId: saleId,
+        itemId: before!.items.single.id!,
+        qty: 2,
+      );
+
+      final after = await sales.byId(saleId);
+      expect(after!.totalCentavos, 2000);
+      // No stamp for a no-op.
+      expect(after.note, isNull);
+    });
+
+    test('a negative quantity is refused', () async {
+      final product = await item();
+      final saleId = await sales.recordSale(
+        lines: [CartLine(product: product, qty: 1)],
+        paymentType: PaymentType.cash,
+      );
+      final before = await sales.byId(saleId);
+
+      expect(
+        () => sales.setSaleItemQty(
+          saleId: saleId,
+          itemId: before!.items.single.id!,
+          qty: -1,
+        ),
+        throwsArgumentError,
+      );
+    });
+
+    test('an unknown line is ignored rather than corrupting the total',
+        () async {
+      final product = await item(price: 1000, cost: 700);
+      final saleId = await sales.recordSale(
+        lines: [CartLine(product: product, qty: 2)],
+        paymentType: PaymentType.cash,
+      );
+
+      await sales.setSaleItemQty(saleId: saleId, itemId: 999999, qty: 1);
+
+      final after = await sales.byId(saleId);
+      expect(after!.totalCentavos, 2000);
+      expect(after.items, hasLength(1));
+    });
+
+    test('corrected totals flow through to the reports', () async {
+      final product = await item(price: 1000, cost: 700);
+      final saleId = await sales.recordSale(
+        lines: [CartLine(product: product, qty: 5)],
+        paymentType: PaymentType.cash,
+      );
+      final before = await sales.byId(saleId);
+
+      await sales.setSaleItemQty(
+        saleId: saleId,
+        itemId: before!.items.single.id!,
+        qty: 2,
+      );
+
+      final summary = await reports.summary(Period.today());
+      expect(summary.revenueCentavos, 2000);
+      expect(summary.grossProfitCentavos, 600);
+      expect(summary.itemCount, 2);
     });
   });
 
@@ -722,6 +1040,321 @@ void main() {
       final result = await service.restoreFrom(junk);
       expect(result.ok, isFalse);
       expect(result.message, contains('not a BentaGo backup'));
+    });
+  });
+
+  /// The exported report is a flat list of sold lines with the two totals above
+  /// it. Both writers are checked by reading the file back, not by trusting that
+  /// the call returned without throwing.
+  group('exporting reports', () {
+    late ExportService export;
+    late Directory reportsDir;
+
+    setUp(() async {
+      reportsDir = Directory(p.join(tempDir.path, 'reports'));
+      export = ExportService(db, rootOverride: reportsDir);
+    });
+
+    Future<Product> item({
+      String name = 'Test item',
+      int price = 1000,
+      int cost = 700,
+    }) async {
+      final id = await products.insert(
+        Product(name: name, priceCentavos: price, costCentavos: cost),
+      );
+      return (await products.byId(id))!;
+    }
+
+    test('one row per sold line, not one per transaction', () async {
+      final a = await item(name: 'Piattos', price: 2000, cost: 1700);
+      final b = await item(name: 'Coke', price: 2500, cost: 2150);
+      await sales.recordSale(
+        lines: [
+          CartLine(product: a, qty: 2),
+          CartLine(product: b, qty: 1),
+        ],
+        paymentType: PaymentType.cash,
+      );
+
+      final data = await export.gather(Period.today());
+      expect(data.lines, hasLength(2));
+      expect(data.saleCount, 1);
+      expect(
+        data.lines.map((l) => l.product).toList(),
+        containsAll(['Piattos', 'Coke']),
+      );
+    });
+
+    test('gross sales and profit are totalled per line and overall', () async {
+      final product = await item(price: 2000, cost: 1700);
+      await sales.recordSale(
+        lines: [CartLine(product: product, qty: 3)],
+        paymentType: PaymentType.cash,
+      );
+
+      final data = await export.gather(Period.today());
+      final line = data.lines.single;
+      expect(line.qty, 3);
+      expect(line.grossCentavos, 6000);
+      expect(line.costCentavos, 5100);
+      expect(line.profitCentavos, 900);
+
+      expect(data.grossCentavos, 6000);
+      expect(data.profitCentavos, 900);
+      expect(data.qty, 3);
+    });
+
+    test('cancelled sales are left out of the report', () async {
+      final product = await item(price: 1000, cost: 700);
+      final keep = await sales.recordSale(
+        lines: [CartLine(product: product, qty: 1)],
+        paymentType: PaymentType.cash,
+      );
+      final drop = await sales.recordSale(
+        lines: [CartLine(product: product, qty: 4)],
+        paymentType: PaymentType.cash,
+      );
+      await sales.voidSale(drop);
+
+      final data = await export.gather(Period.today());
+      expect(data.lines, hasLength(1));
+      expect(data.lines.single.saleId, keep);
+      expect(data.grossCentavos, 1000);
+    });
+
+    test('a line taken off a sale is gone from the report', () async {
+      final a = await item(name: 'Piattos', price: 2000, cost: 1700);
+      final b = await item(name: 'Coke', price: 2500, cost: 2150);
+      final saleId = await sales.recordSale(
+        lines: [
+          CartLine(product: a, qty: 2),
+          CartLine(product: b, qty: 1),
+        ],
+        paymentType: PaymentType.cash,
+      );
+      final sale = await sales.byId(saleId);
+      final piattos =
+          sale!.items.firstWhere((i) => i.productName == 'Piattos');
+      await sales.setSaleItemQty(
+        saleId: saleId,
+        itemId: piattos.id!,
+        qty: 0,
+      );
+
+      final data = await export.gather(Period.today());
+      expect(data.lines, hasLength(1));
+      expect(data.lines.single.product, 'Coke');
+      expect(data.grossCentavos, 2500);
+    });
+
+    test('a corrected quantity is reported at its new value', () async {
+      final product = await item(price: 1000, cost: 700);
+      final saleId = await sales.recordSale(
+        lines: [CartLine(product: product, qty: 5)],
+        paymentType: PaymentType.cash,
+      );
+      final sale = await sales.byId(saleId);
+      await sales.setSaleItemQty(
+        saleId: saleId,
+        itemId: sale!.items.single.id!,
+        qty: 2,
+      );
+
+      final data = await export.gather(Period.today());
+      expect(data.lines.single.qty, 2);
+      expect(data.grossCentavos, 2000);
+      expect(data.profitCentavos, 600);
+    });
+
+    test('a range outside the sales reports nothing rather than throwing',
+        () async {
+      final product = await item();
+      await sales.recordSale(
+        lines: [CartLine(product: product, qty: 1)],
+        paymentType: PaymentType.cash,
+      );
+
+      final lastYear = Period.of(
+        PeriodKind.year,
+        DateTime(DateTime.now().year - 1, 6),
+      );
+      final data = await export.gather(lastYear);
+      expect(data.isEmpty, isTrue);
+      expect(data.grossCentavos, 0);
+      expect(data.profitCentavos, 0);
+      expect(data.saleCount, 0);
+    });
+
+    test('profit is flagged as an estimate when a line has no cost', () async {
+      final costed = await item(name: 'Costed', price: 1000, cost: 700);
+      await sales.recordSale(
+        lines: [CartLine(product: costed, qty: 1)],
+        paymentType: PaymentType.cash,
+      );
+      expect((await export.gather(Period.today())).profitIsEstimate, isFalse);
+
+      final uncosted = await item(name: 'No cost', price: 1000, cost: 0);
+      await sales.recordSale(
+        lines: [CartLine(product: uncosted, qty: 1)],
+        paymentType: PaymentType.cash,
+      );
+      expect((await export.gather(Period.today())).profitIsEstimate, isTrue);
+    });
+
+    test('legacy utang rows are labelled Credit in the report', () async {
+      final product = await item(price: 1000, cost: 700);
+      final customerId =
+          await customers.insert(const Customer(name: 'Aling Beth'));
+      final saleId = await sales.recordSale(
+        lines: [CartLine(product: product, qty: 1)],
+        paymentType: PaymentType.credit,
+        customerId: customerId,
+      );
+      await db.db.update(
+        'sales',
+        {'payment_type': 'utang'},
+        where: 'id = ?',
+        whereArgs: [saleId],
+      );
+
+      final data = await export.gather(Period.today());
+      expect(data.lines.single.payment, 'Credit');
+      expect(data.lines.single.customer, 'Aling Beth');
+    });
+
+    test('the excel sheet carries the totals above the line table', () async {
+      final product = await item(name: 'Piattos', price: 2000, cost: 1700);
+      await sales.recordSale(
+        lines: [CartLine(product: product, qty: 3)],
+        paymentType: PaymentType.cash,
+      );
+
+      final data = await export.gather(Period.today());
+      final book = Excel.decodeBytes(export.buildExcel(data));
+      final sheet = book.tables['Sales'];
+      expect(sheet, isNotNull);
+
+      String? textAt(int column, int row) =>
+          sheet!.rows[row][column]?.value?.toString();
+
+      // Totals first, then the header row, then the data.
+      final flat = sheet!.rows
+          .map((r) => r.map((c) => c?.value?.toString() ?? '').join('|'))
+          .toList();
+      final totalsRow =
+          flat.indexWhere((r) => r.startsWith('Total gross sales'));
+      final headerRow = flat.indexWhere((r) => r.startsWith('Date|Time'));
+      expect(totalsRow, greaterThanOrEqualTo(0));
+      expect(headerRow, greaterThan(totalsRow));
+
+      expect(numberAt(sheet, 1, totalsRow), 60);
+      expect(numberAt(sheet, 1, totalsRow + 1), 9);
+
+      // The single data line, immediately after the header.
+      final dataRow = headerRow + 1;
+      expect(textAt(3, dataRow), 'Piattos');
+      expect(numberAt(sheet, 4, dataRow), 3);
+      expect(numberAt(sheet, 7, dataRow), 60);
+      expect(numberAt(sheet, 8, dataRow), 9);
+      expect(textAt(9, dataRow), 'Cash');
+    });
+
+    test('excel money lands as numbers, not text, so it can be re-totalled',
+        () async {
+      final product = await item(price: 2000, cost: 1725);
+      await sales.recordSale(
+        lines: [CartLine(product: product, qty: 3)],
+        paymentType: PaymentType.cash,
+      );
+
+      final data = await export.gather(Period.today());
+      final sheet = Excel.decodeBytes(export.buildExcel(data)).tables['Sales']!;
+      final headerRow = sheet.rows.indexWhere(
+        (r) => r.isNotEmpty && r.first?.value?.toString() == 'Date',
+      );
+      final dataRow = headerRow + 1;
+
+      // Numeric, not a string -- that is the whole reason to write xlsx rather
+      // than reuse the CSV the backup already produces. Whether a whole amount
+      // comes back as an int or a double is the library's business.
+      for (final column in [5, 6, 7, 8]) {
+        final cell = sheet.rows[dataRow][column]?.value;
+        expect(
+          cell,
+          anyOf(isA<IntCellValue>(), isA<DoubleCellValue>()),
+          reason: 'column $column should be numeric',
+        );
+      }
+      // Centavos survive the conversion to pesos.
+      expect(numberAt(sheet, 6, dataRow), 17.25);
+      expect(numberAt(sheet, 7, dataRow), 60);
+      expect(numberAt(sheet, 8, dataRow), closeTo(8.25, 0.001));
+    });
+
+    test('the pdf writes a real document', () async {
+      final product = await item();
+      await sales.recordSale(
+        lines: [CartLine(product: product, qty: 2)],
+        paymentType: PaymentType.cash,
+      );
+
+      final bytes = await export.buildPdf(await export.gather(Period.today()));
+      expect(bytes.length, greaterThan(1000));
+      expect(String.fromCharCodes(bytes.take(5)), '%PDF-');
+    });
+
+    test('an empty period still produces both files', () async {
+      final data = await export.gather(Period.today());
+      expect(data.isEmpty, isTrue);
+
+      expect(export.buildExcel(data), isNotEmpty);
+      final pdf = await export.buildPdf(data);
+      expect(String.fromCharCodes(pdf.take(5)), '%PDF-');
+    });
+
+    test('the file lands in the reports folder named after the period',
+        () async {
+      final product = await item();
+      await sales.recordSale(
+        lines: [CartLine(product: product, qty: 1)],
+        paymentType: PaymentType.cash,
+      );
+
+      final period = Period.of(PeriodKind.month, DateTime.now());
+      final xlsx = await export.export(period, ExportFormat.excel);
+      final pdf = await export.export(period, ExportFormat.pdf);
+
+      expect(await xlsx.exists(), isTrue);
+      expect(await pdf.exists(), isTrue);
+      expect(
+        p.basename(xlsx.path),
+        'bentago-report-${Dates.monthKey(DateTime.now())}.xlsx',
+      );
+      expect(p.basename(pdf.path), endsWith('.pdf'));
+      expect(p.dirname(xlsx.path), reportsDir.path);
+    });
+
+    test('each period kind exports to its own file name', () async {
+      final product = await item();
+      await sales.recordSale(
+        lines: [CartLine(product: product, qty: 1)],
+        paymentType: PaymentType.cash,
+      );
+
+      final now = DateTime.now();
+      final names = <String>{};
+      for (final kind in [
+        PeriodKind.day,
+        PeriodKind.month,
+        PeriodKind.quarter,
+        PeriodKind.year,
+      ]) {
+        final file = await export.export(Period.of(kind, now), ExportFormat.pdf);
+        names.add(p.basename(file.path));
+      }
+      // Four kinds, four files -- exporting a year must not overwrite the month.
+      expect(names, hasLength(4));
     });
   });
 

@@ -1,11 +1,10 @@
 ﻿import 'dart:io';
 
-import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
-import 'package:path_provider/path_provider.dart';
 
 import '../core/format.dart';
 import 'app_database.dart';
+import 'app_storage.dart';
 
 enum BackupKind { monthly, manual, safety }
 
@@ -91,27 +90,8 @@ class BackupService {
   static const int keepSafety = 3;
 
   /// Root of everything this service writes.
-  Future<Directory> rootDirectory() async {
-    final override = _rootOverride;
-    if (override != null) {
-      if (!await override.exists()) await override.create(recursive: true);
-      return override;
-    }
-
-    Directory base;
-    if (!kIsWeb && Platform.isAndroid) {
-      // App-scoped external storage: visible to the user, no permission needed.
-      base = await getExternalStorageDirectory() ??
-          await getApplicationDocumentsDirectory();
-    } else {
-      base = await getApplicationDocumentsDirectory();
-    }
-    final dir = Directory(p.join(base.path, 'BentaGo', 'Backups'));
-    if (!await dir.exists()) {
-      await dir.create(recursive: true);
-    }
-    return dir;
-  }
+  Future<Directory> rootDirectory() =>
+      appOwnedDirectory('Backups', override: _rootOverride);
 
   Future<Directory> _folderFor(BackupKind kind) async {
     final root = await rootDirectory();

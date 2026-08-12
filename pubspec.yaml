@@ -1,7 +1,7 @@
-name: bentago
+﻿name: bentago
 description: Sales tracker for a sari-sari store. Works fully offline, no account needed.
 publish_to: "none"
-version: 1.0.0+1
+version: 1.0.0+2
 
 # Color.withValues() needs Dart 3.6 / Flutter 3.27, and ThemeData.cardTheme
 # takes CardThemeData from Flutter 3.29 onward. Both are used below.
@@ -33,6 +33,17 @@ dependencies:
   # Kotlin Gradle plugin and relies on built-in Kotlin, which the Flutter
   # template disables).
   share_plus: ^10.0.0
+
+  # Report export. Both are pure Dart with no platform channels, chosen for the
+  # same reason there is no file picker: a plugin that ships its own Kotlin is a
+  # build failure waiting for the next AGP.
+  #
+  # The PDF writer only has the 14 standard PDF fonts, which are WinAnsi and do
+  # not carry the peso sign (U+20B1). Exported figures are therefore plain
+  # numbers under a "PHP" column heading. Deliberately ASCII-only in this file:
+  # release.ps1 -BumpBuild rewrites pubspec.yaml and mangles non-ASCII bytes.
+  excel: ^4.0.6
+  pdf: ^3.11.1
 
 dev_dependencies:
   flutter_test:

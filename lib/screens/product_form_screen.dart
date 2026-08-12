@@ -8,9 +8,14 @@ import '../data/seed_products.dart';
 import '../state/providers.dart';
 import '../widgets/common.dart';
 
-/// Product profiling, kept deliberately shallow: a name and a price is a
-/// complete product. Everything else sits under "More details", collapsed, so
-/// adding an item mid-rush is two fields and a save.
+/// Product profiling. The required fields run in the order a shopkeeper
+/// actually knows them: what it cost, what to add on top, and only then what to
+/// charge. The selling price is worked out rather than typed, so a product
+/// cannot quietly end up priced below what the store paid for it.
+///
+/// The price stays editable -- the pencil beside it hands control back -- and
+/// then the markup follows the price instead of driving it. Whichever field was
+/// touched last is the one telling the truth.
 class ProductFormScreen extends ConsumerStatefulWidget {
   const ProductFormScreen({super.key, this.product, this.initialName});
 
@@ -27,6 +32,7 @@ class _ProductFormScreenState extends ConsumerState<ProductFormScreen> {
   late final TextEditingController _name;
   late final TextEditingController _price;
   late final TextEditingController _cost;
+  late final TextEditingController _markup;
   late final TextEditingController _description;
   late final TextEditingController _unitLabel;
   late final TextEditingController _barcode;
@@ -35,6 +41,10 @@ class _ProductFormScreenState extends ConsumerState<ProductFormScreen> {
   String? _emoji;
   bool _showOptional = false;
   bool _saving = false;
+
+  /// False while the price is worked out from cost and markup. The pencil beside
+  /// the price flips it, after which the markup is derived from the price.
+  bool _priceByHand = false;
 
   bool get _isEditing => widget.product != null;
 
@@ -53,6 +63,11 @@ class _ProductFormScreenState extends ConsumerState<ProductFormScreen> {
           ? Money.plain(product.costCentavos)
           : '',
     );
+    // Derived, never stored: a product row carries a cost and a price, and the
+    // markup is whatever sits between them.
+    _markup = TextEditingController(
+      text: product == null ? '' : _percentText(product.markupPercent),
+    );
     _description = TextEditingController(text: product?.description ?? '');
     _unitLabel = TextEditingController(text: product?.unitLabel ?? 'pc');
     _barcode = TextEditingController(text: product?.barcode ?? '');
@@ -60,11 +75,15 @@ class _ProductFormScreenState extends ConsumerState<ProductFormScreen> {
     _category = product?.category;
     _emoji = product?.emoji;
 
+    // A product saved before cost was required has a price but nothing to derive
+    // a markup from. Start it in by-hand mode so opening the form to fix the
+    // category cannot silently rewrite the price it already sells at.
+    _priceByHand = product != null && !product.hasCost;
+
     // An existing product that already carries optional detail should show it
     // rather than hide the values behind a collapsed section.
     _showOptional = product != null &&
-        (product.hasCost ||
-            (product.description?.isNotEmpty ?? false) ||
+        ((product.description?.isNotEmpty ?? false) ||
             (product.barcode?.isNotEmpty ?? false) ||
             product.category != null);
   }
@@ -74,10 +93,79 @@ class _ProductFormScreenState extends ConsumerState<ProductFormScreen> {
     _name.dispose();
     _price.dispose();
     _cost.dispose();
+    _markup.dispose();
     _description.dispose();
     _unitLabel.dispose();
     _barcode.dispose();
     super.dispose();
+  }
+
+  // --- the cost / markup / price triangle -----------------------------------
+  //
+  // Two of the three are always inputs and the third is worked out. Assigning to
+  // a controller does not fire its `onChanged`, so writing the derived field
+  // back here cannot loop.
+
+  int? get _costValue => Money.parse(_cost.text);
+  int? get _priceValue => Money.parse(_price.text);
+  double? get _markupValue => _parsePercent(_markup.text);
+
+  void _recalculatePrice() {
+    final cost = _costValue;
+    final markup = _markupValue;
+    // Leave the price untouched while either input is still missing -- clearing
+    // a half-typed cost should not blank a price the user can see.
+    if (cost == null || cost <= 0 || markup == null) return;
+    _price.text = Money.plain(Product.priceFromMarkup(cost, markup));
+  }
+
+  void _recalculateMarkup() {
+    final cost = _costValue;
+    final price = _priceValue;
+    if (cost == null || cost <= 0 || price == null) return;
+    _markup.text = _percentText(Product.markupFor(cost, price));
+  }
+
+  void _onCostChanged() => setState(() {
+        if (_priceByHand) {
+          _recalculateMarkup();
+        } else {
+          _recalculatePrice();
+        }
+      });
+
+  /// Typing a markup means the markup is in charge again, even if the price had
+  /// been set by hand a moment ago.
+  void _onMarkupChanged() => setState(() {
+        _priceByHand = false;
+        _recalculatePrice();
+      });
+
+  void _onPriceChanged() => setState(_recalculateMarkup);
+
+  void _togglePriceByHand() => setState(() {
+        _priceByHand = !_priceByHand;
+        if (!_priceByHand) _recalculatePrice();
+      });
+
+  /// States both numbers rather than picking one. The form asks for a markup
+  /// (profit over cost) while the Reports screen talks in margin (profit over
+  /// price), and showing them together is what stops the two being read as the
+  /// same figure.
+  String _priceHelper(int profit, double? marginPercent) {
+    final cost = _costValue;
+    if (cost == null || cost <= 0 || _priceValue == null) {
+      return _priceByHand
+          ? 'Typed by hand.'
+          : 'Filled in once there is a cost and a markup.';
+    }
+    if (profit < 0) {
+      return 'Below cost — losing ${Money.format(-profit)} per piece.';
+    }
+    final source = _priceByHand ? 'By hand' : 'From the markup';
+    final margin =
+        marginPercent == null ? '' : ', ${_percentText(marginPercent)}% margin';
+    return '$source · ${Money.format(profit)} profit per piece$margin.';
   }
 
   /// Prompts for a category name and selects it. Nothing is written until the
@@ -175,9 +263,10 @@ class _ProductFormScreenState extends ConsumerState<ProductFormScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final price = Money.parse(_price.text) ?? 0;
-    final cost = Money.parse(_cost.text) ?? 0;
-    final margin = price - cost;
+    final price = _priceValue ?? 0;
+    final cost = _costValue ?? 0;
+    final profit = price - cost;
+    final marginPercent = price > 0 ? profit / price * 100 : null;
 
     // Suggestions plus everything already in use, so a custom category shows up
     // as a chip for every product added after it.
@@ -227,19 +316,85 @@ class _ProductFormScreenState extends ConsumerState<ProductFormScreen> {
             const SizedBox(height: 12),
 
             TextFormField(
-              controller: _price,
+              controller: _cost,
               keyboardType:
                   const TextInputType.numberWithOptions(decimal: true),
-              onChanged: (_) => setState(() {}),
+              textInputAction: TextInputAction.next,
+              onChanged: (_) => _onCostChanged(),
+              decoration: const InputDecoration(
+                labelText: 'Cost per piece',
+                prefixText: '₱ ',
+                hintText: '0.00',
+                helperText: 'What the store paid for one.',
+              ),
+              validator: (value) {
+                final parsed = Money.parse(value ?? '');
+                if (parsed == null) return 'Enter what one piece costs.';
+                if (parsed <= 0) return 'Must be more than zero.';
+                return null;
+              },
+            ),
+            const SizedBox(height: 12),
+
+            TextFormField(
+              controller: _markup,
+              keyboardType:
+                  const TextInputType.numberWithOptions(decimal: true),
+              textInputAction: TextInputAction.next,
+              onChanged: (_) => _onMarkupChanged(),
+              decoration: InputDecoration(
+                labelText: 'Markup',
+                suffixText: '%',
+                hintText: '20',
+                helperText: cost > 0 && _markupValue != null
+                    ? 'Adds ${Money.format(profit)} on top of '
+                        '${Money.format(cost)}.'
+                    : 'How much to add on top of the cost.',
+                helperMaxLines: 2,
+              ),
+              validator: (value) {
+                if (_parsePercent(value ?? '') == null) {
+                  return 'Enter a markup, e.g. 20.';
+                }
+                return null;
+              },
+            ),
+            const SizedBox(height: 12),
+
+            TextFormField(
+              controller: _price,
+              readOnly: !_priceByHand,
+              keyboardType:
+                  const TextInputType.numberWithOptions(decimal: true),
+              onChanged: (_) => _onPriceChanged(),
               style: const TextStyle(
                 fontSize: 20,
                 fontWeight: FontWeight.w700,
                 fontFeatures: [FontFeature.tabularFigures()],
               ),
-              decoration: const InputDecoration(
+              decoration: InputDecoration(
                 labelText: 'Selling price',
                 prefixText: '₱ ',
                 hintText: '0.00',
+                filled: !_priceByHand,
+                helperText: _priceHelper(profit, marginPercent),
+                helperMaxLines: 2,
+                helperStyle: profit < 0
+                    ? TextStyle(
+                        color: context.colors.danger,
+                        fontWeight: FontWeight.w600,
+                      )
+                    : null,
+                suffixIcon: IconButton(
+                  icon: Icon(
+                    _priceByHand ? Icons.calculate_outlined : Icons.edit_outlined,
+                    size: 20,
+                  ),
+                  tooltip: _priceByHand
+                      ? 'Go back to the markup price'
+                      : 'Set the price by hand',
+                  onPressed: _togglePriceByHand,
+                ),
               ),
               validator: (value) {
                 final parsed = Money.parse(value ?? '');
@@ -287,23 +442,6 @@ class _ProductFormScreenState extends ConsumerState<ProductFormScreen> {
 
             if (_showOptional) ...[
               const SizedBox(height: 6),
-              TextFormField(
-                controller: _cost,
-                keyboardType:
-                    const TextInputType.numberWithOptions(decimal: true),
-                onChanged: (_) => setState(() {}),
-                decoration: InputDecoration(
-                  labelText: 'Cost per piece',
-                  prefixText: '₱ ',
-                  helperText: cost > 0 && price > 0
-                      ? 'Profit: ${Money.format(margin)} '
-                          '(${(margin / price * 100).round()}%)'
-                      : 'Leave blank and the whole price counts as profit.',
-                  helperMaxLines: 2,
-                ),
-              ),
-              const SizedBox(height: 18),
-
               Row(
                 children: [
                   Text(
@@ -412,6 +550,21 @@ class _ProductFormScreenState extends ConsumerState<ProductFormScreen> {
       ),
     );
   }
+}
+
+/// Percentages are entered loosely -- `20`, `20%`, `20.5` -- and shown without a
+/// trailing `.0`, so a round markup reads as "20" and not "20.0".
+double? _parsePercent(String input) {
+  final cleaned = input.replaceAll(RegExp(r'[^0-9.\-]'), '').trim();
+  if (cleaned.isEmpty) return null;
+  return double.tryParse(cleaned);
+}
+
+String _percentText(double? value) {
+  if (value == null) return '';
+  final rounded = (value * 10).round() / 10;
+  if (rounded == rounded.roundToDouble()) return rounded.toStringAsFixed(0);
+  return rounded.toStringAsFixed(1);
 }
 
 class _EmojiPicker extends StatelessWidget {

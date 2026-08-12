@@ -80,6 +80,26 @@ abstract class Dates {
   static DateTime endOfMonth(DateTime d) =>
       DateTime(d.year, d.month + 1, 0, 23, 59, 59, 999);
 
+  /// Calendar quarters: Q1 is January to March.
+  static int quarterOf(DateTime d) => ((d.month - 1) ~/ 3) + 1;
+
+  static DateTime startOfQuarter(DateTime d) =>
+      DateTime(d.year, ((d.month - 1) ~/ 3) * 3 + 1);
+  static DateTime endOfQuarter(DateTime d) =>
+      endOfMonth(DateTime(d.year, ((d.month - 1) ~/ 3) * 3 + 3));
+
+  static DateTime startOfYear(DateTime d) => DateTime(d.year);
+  static DateTime endOfYear(DateTime d) =>
+      DateTime(d.year, 12, 31, 23, 59, 59, 999);
+
+  /// `1 Aug – 13 Sep 2026`, dropping the repeated year when both ends share it.
+  static String rangeLabel(DateTime start, DateTime end) {
+    if (start.year == end.year) {
+      return '${shortDay(start)} – ${shortDay(end)} ${start.year}';
+    }
+    return '${shortDay(start)} ${start.year} – ${shortDay(end)} ${end.year}';
+  }
+
   static DateTime parseDayKey(String key) => DateTime.parse('${key}T00:00:00');
 
   /// "Today" / "Yesterday" / the date. Used in list headers.

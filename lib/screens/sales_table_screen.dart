@@ -171,7 +171,7 @@ class _FilterRow extends StatelessWidget {
             ),
           ),
           if (period != null) ...[
-            for (final kind in PeriodKind.values)
+            for (final kind in browsablePeriodKinds)
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 5),
                 child: ChoiceChip(
@@ -394,6 +394,214 @@ class _SalesTable extends StatelessWidget {
   }
 }
 
+/// Opens the quantity editor for one line and applies whatever comes back.
+///
+/// Taking the last remaining line off a sale cancels the sale instead of
+/// leaving a record worth nothing, so that case asks a different question.
+Future<void> _editLine(
+  BuildContext context,
+  WidgetRef ref,
+  Sale sale,
+  SaleItem item,
+) async {
+  final result = await showDialog<int>(
+    context: context,
+    builder: (_) => _LineEditDialog(item: item, isOnlyLine: sale.items.length == 1),
+  );
+  if (result == null || result == item.qty || !context.mounted) return;
+
+  if (result == 0) {
+    final ok = await confirmDestructive(
+      context,
+      title: sale.items.length == 1
+          ? 'Cancel sale #${sale.id}?'
+          : 'Take ${item.productName} off sale #${sale.id}?',
+      message: sale.items.length == 1
+          ? 'It is the only item on this sale, so the whole sale is cancelled. '
+              'The record stays, marked cancelled.'
+          : 'The sale total drops by ${Money.format(item.lineTotalCentavos)}.'
+              '${sale.paymentType == PaymentType.credit ? ' The customer\'s credit is reduced to match.' : ''}',
+      confirmLabel: sale.items.length == 1 ? 'Cancel sale' : 'Take it off',
+    );
+    if (!ok) return;
+  }
+
+  try {
+    await ref.read(salesRepositoryProvider).setSaleItemQty(
+          saleId: sale.id!,
+          itemId: item.id!,
+          qty: result,
+        );
+    ref.refreshData();
+    if (!context.mounted) return;
+    // The sheet is showing a sale that no longer exists as a live record.
+    if (result == 0 && sale.items.length == 1) Navigator.pop(context);
+    showToast(context, 'Sale #${sale.id} updated');
+  } on Object catch (error) {
+    if (context.mounted) {
+      showToast(context, 'Not saved: $error', isError: true);
+    }
+  }
+}
+
+class _SaleLineRow extends StatelessWidget {
+  const _SaleLineRow({
+    required this.item,
+    required this.editable,
+    required this.onEdit,
+  });
+
+  final SaleItem item;
+  final bool editable;
+  final VoidCallback onEdit;
+
+  @override
+  Widget build(BuildContext context) {
+    final row = Padding(
+      padding: EdgeInsets.symmetric(vertical: 6, horizontal: editable ? 8 : 0),
+      child: Row(
+        children: [
+          SizedBox(
+            width: 34,
+            child: Text(
+              '${item.qty}×',
+              style: TextStyle(
+                fontWeight: FontWeight.w700,
+                color: context.colors.muted,
+              ),
+            ),
+          ),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  item.productName,
+                  style: const TextStyle(
+                    fontSize: 14.5,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                Text(
+                  '${Money.format(item.unitPriceCentavos)} each'
+                  '${item.unitCostCentavos > 0 ? ' · cost ${Money.format(item.unitCostCentavos)}' : ''}',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: context.colors.muted,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          Text(
+            Money.format(item.lineTotalCentavos),
+            style: const TextStyle(
+              fontSize: 14.5,
+              fontWeight: FontWeight.w700,
+              fontFeatures: [FontFeature.tabularFigures()],
+            ),
+          ),
+          if (editable)
+            Padding(
+              padding: const EdgeInsets.only(left: 6),
+              child: Icon(
+                Icons.edit_outlined,
+                size: 16,
+                color: context.colors.muted,
+              ),
+            ),
+        ],
+      ),
+    );
+
+    if (!editable) return row;
+    return InkWell(
+      onTap: onEdit,
+      borderRadius: BorderRadius.circular(10),
+      child: row,
+    );
+  }
+}
+
+/// Quantity only. The unit price is shown but never editable -- it is what the
+/// item actually sold for, and a sale that can be re-priced after the fact is a
+/// sale whose history cannot be trusted.
+class _LineEditDialog extends StatefulWidget {
+  const _LineEditDialog({required this.item, required this.isOnlyLine});
+
+  final SaleItem item;
+  final bool isOnlyLine;
+
+  @override
+  State<_LineEditDialog> createState() => _LineEditDialogState();
+}
+
+class _LineEditDialogState extends State<_LineEditDialog> {
+  late int _qty = widget.item.qty;
+
+  @override
+  Widget build(BuildContext context) {
+    final item = widget.item;
+    final total = item.unitPriceCentavos * _qty;
+
+    return AlertDialog(
+      title: Text(item.productName),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            '${Money.format(item.unitPriceCentavos)} each · sold at this price',
+            style: TextStyle(fontSize: 12.5, color: context.colors.muted),
+          ),
+          const SizedBox(height: 18),
+          Center(
+            child: QtyStepper(
+              qty: _qty,
+              min: 1,
+              onChanged: (value) => setState(() => _qty = value),
+            ),
+          ),
+          const SizedBox(height: 18),
+          Row(
+            children: [
+              const Expanded(
+                child: Text(
+                  'Line total',
+                  style: TextStyle(fontWeight: FontWeight.w600),
+                ),
+              ),
+              Text(
+                Money.format(total),
+                style: const TextStyle(
+                  fontSize: 17,
+                  fontWeight: FontWeight.w800,
+                  fontFeatures: [FontFeature.tabularFigures()],
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context, 0),
+          style: TextButton.styleFrom(foregroundColor: context.colors.danger),
+          child: Text(widget.isOnlyLine ? 'Cancel sale' : 'Take it off'),
+        ),
+        const Spacer(),
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Back'),
+        ),
+        FilledButton(
+          onPressed: _qty == item.qty ? null : () => Navigator.pop(context, _qty),
+          child: const Text('Save'),
+        ),
+      ],
+    );
+  }
+}
+
 class _SaleDetailSheet extends ConsumerWidget {
   const _SaleDetailSheet({required this.saleId});
 
@@ -479,53 +687,23 @@ class _SaleDetailSheet extends ConsumerWidget {
                   ),
                 const SizedBox(height: 18),
 
-                for (final item in data.items)
+                if (!data.voided)
                   Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 6),
-                    child: Row(
-                      children: [
-                        SizedBox(
-                          width: 34,
-                          child: Text(
-                            '${item.qty}×',
-                            style: TextStyle(
-                              fontWeight: FontWeight.w700,
-                              color: context.colors.muted,
-                            ),
-                          ),
-                        ),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                item.productName,
-                                style: const TextStyle(
-                                  fontSize: 14.5,
-                                  fontWeight: FontWeight.w600,
-                                ),
-                              ),
-                              Text(
-                                '${Money.format(item.unitPriceCentavos)} each'
-                                '${item.unitCostCentavos > 0 ? ' · cost ${Money.format(item.unitCostCentavos)}' : ''}',
-                                style: TextStyle(
-                                  fontSize: 12,
-                                  color: context.colors.muted,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                        Text(
-                          Money.format(item.lineTotalCentavos),
-                          style: const TextStyle(
-                            fontSize: 14.5,
-                            fontWeight: FontWeight.w700,
-                            fontFeatures: [FontFeature.tabularFigures()],
-                          ),
-                        ),
-                      ],
+                    padding: const EdgeInsets.only(bottom: 6),
+                    child: Text(
+                      'Tap an item to fix its quantity or take it off.',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: context.colors.muted,
+                      ),
                     ),
+                  ),
+
+                for (final item in data.items)
+                  _SaleLineRow(
+                    item: item,
+                    editable: !data.voided,
+                    onEdit: () => _editLine(context, ref, data, item),
                   ),
 
                 const Divider(height: 26),

@@ -246,16 +246,131 @@ class SalesRepository {
     return rows.map(SaleItem.fromRow).toList();
   }
 
-  /// The most recent non-voided sale, for the undo affordance.
-  Future<Sale?> lastSale() async {
-    final rows = await _db.query(
+  // --- corrections --------------------------------------------------------
+
+  /// Changes one line's quantity and re-totals the sale around it.
+  ///
+  /// The line keeps the unit price and unit cost it was sold at. A product whose
+  /// price changed since is irrelevant here -- the recorded sale is what
+  /// happened, and re-pricing it from today's product row would rewrite last
+  /// month's profit.
+  ///
+  /// Setting the quantity to zero removes the line, and removing the last line
+  /// voids the whole sale rather than leaving a sale worth nothing.
+  Future<void> setSaleItemQty({
+    required int saleId,
+    required int itemId,
+    required int qty,
+  }) async {
+    if (qty < 0) throw ArgumentError('Quantity cannot be negative.');
+
+    final removingLast = await _db.transaction((txn) async {
+      final itemRows = await txn.query(
+        'sale_items',
+        where: 'id = ? AND sale_id = ?',
+        whereArgs: [itemId, saleId],
+        limit: 1,
+      );
+      if (itemRows.isEmpty) return false;
+      final item = SaleItem.fromRow(itemRows.first);
+      if (item.qty == qty) return false;
+
+      final siblings = await txn.query(
+        'sale_items',
+        where: 'sale_id = ? AND id != ?',
+        whereArgs: [saleId, itemId],
+      );
+      if (qty == 0 && siblings.isEmpty) return true;
+
+      if (qty == 0) {
+        await txn.delete('sale_items', where: 'id = ?', whereArgs: [itemId]);
+      } else {
+        await txn.update(
+          'sale_items',
+          {
+            'qty': qty,
+            'line_total_centavos': item.unitPriceCentavos * qty,
+          },
+          where: 'id = ?',
+          whereArgs: [itemId],
+        );
+      }
+
+      await _retotal(
+        txn,
+        saleId,
+        note: qty == 0
+            ? 'removed ${item.productName}'
+            : '${item.productName} ${item.qty}→$qty',
+      );
+      return false;
+    });
+
+    // Outside the transaction: voidSale opens its own.
+    if (removingLast) await voidSale(saleId);
+  }
+
+  /// Recomputes a sale's total and cost from the lines it still has, moves any
+  /// credit balance by the difference, and stamps what changed on the row.
+  ///
+  /// The ledger is never rewritten -- a correction appends an adjusting entry the
+  /// same way a cancellation does, so a customer's tab can always be read as a
+  /// list of things that happened.
+  Future<void> _retotal(
+    DatabaseExecutor txn,
+    int saleId, {
+    required String note,
+  }) async {
+    final saleRows = await txn.query(
       'sales',
-      where: 'voided = 0',
-      orderBy: 'sold_at DESC',
+      where: 'id = ?',
+      whereArgs: [saleId],
       limit: 1,
     );
-    if (rows.isEmpty) return null;
-    return Sale.fromRow(rows.first);
+    if (saleRows.isEmpty) return;
+    final sale = saleRows.first;
+    final previousTotal = (sale['total_centavos'] as int?) ?? 0;
+
+    final totals = await txn.rawQuery('''
+      SELECT COALESCE(SUM(unit_price_centavos * qty), 0) AS total,
+             COALESCE(SUM(unit_cost_centavos * qty), 0)  AS cost
+      FROM sale_items WHERE sale_id = ?
+    ''', [saleId]);
+    final total = (totals.first['total'] as int?) ?? 0;
+    final cost = (totals.first['cost'] as int?) ?? 0;
+
+    final now = DateTime.now();
+    final stamp = 'edited ${Dates.shortDay(now)}: $note';
+    final existing = (sale['note'] as String?)?.trim();
+
+    await txn.update(
+      'sales',
+      {
+        'total_centavos': total,
+        'cost_centavos': cost,
+        'note': existing == null || existing.isEmpty
+            ? stamp
+            : '$existing; $stamp',
+      },
+      where: 'id = ?',
+      whereArgs: [saleId],
+    );
+
+    final customerId = sale['customer_id'] as int?;
+    final wasCredit =
+        PaymentTypeX.fromCode(sale['payment_type'] as String?) ==
+            PaymentType.credit;
+    final delta = total - previousTotal;
+    if (wasCredit && customerId != null && delta != 0) {
+      await txn.insert('ledger_entries', {
+        'customer_id': customerId,
+        'sale_id': saleId,
+        'amount_centavos': delta,
+        'entered_at': now.millisecondsSinceEpoch,
+        'day_key': Dates.dayKey(now),
+        'note': 'Sale #$saleId corrected',
+      });
+    }
   }
 
   // --- expenses -----------------------------------------------------------

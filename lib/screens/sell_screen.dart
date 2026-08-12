@@ -12,8 +12,9 @@ import 'customer_picker.dart';
 import 'product_form_screen.dart';
 
 /// The screen the app opens on. Everything here is optimised for the five
-/// seconds a customer spends at the window: large tiles, no confirmation
-/// dialogs, and an undo instead of an "are you sure".
+/// seconds a customer spends at the window: large tiles and no confirmation
+/// dialogs. Recording a sale is final at the till; fixing one is a deliberate
+/// trip to Records, not a fading button.
 class SellScreen extends ConsumerStatefulWidget {
   const SellScreen({super.key});
 
@@ -31,7 +32,7 @@ class _SellScreenState extends ConsumerState<SellScreen> {
 
     setState(() => _saving = true);
     try {
-      final saleId = await ref.read(salesRepositoryProvider).recordSale(
+      await ref.read(salesRepositoryProvider).recordSale(
             lines: cart.lines,
             paymentType: cart.paymentType,
             customerId: cart.customerId,
@@ -47,22 +48,19 @@ class _SellScreenState extends ConsumerState<SellScreen> {
       setState(() => _basketExpanded = false);
 
       if (!mounted) return;
+      // Confirmation only -- no undo. A snackbar action sitting over the product
+      // grid is one mis-tap away from silently reversing a sale that was
+      // correct, and the window closes before anyone notices. Corrections live
+      // in Records, where the sale can be read back before it is changed.
       ScaffoldMessenger.of(context)
         ..hideCurrentSnackBar()
         ..showSnackBar(
           SnackBar(
-            duration: const Duration(seconds: 8),
+            duration: const Duration(seconds: 3),
             content: Text(
               wasCredit
                   ? 'Recorded: ${Money.format(total)} on $customerName\'s tab'
                   : 'Recorded: ${Money.format(total)}',
-            ),
-            action: SnackBarAction(
-              label: 'Undo',
-              onPressed: () async {
-                await ref.read(salesRepositoryProvider).voidSale(saleId);
-                ref.refreshData();
-              },
             ),
           ),
         );

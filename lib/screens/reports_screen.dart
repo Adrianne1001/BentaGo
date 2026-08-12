@@ -9,6 +9,7 @@ import '../data/report_repository.dart';
 import '../state/providers.dart';
 import '../widgets/charts.dart';
 import '../widgets/common.dart';
+import 'export_report_screen.dart';
 import 'sales_table_screen.dart';
 
 /// One period at a time, day / week / month, driven by a single [Period] so all
@@ -41,6 +42,20 @@ class ReportsScreen extends ConsumerWidget {
       appBar: AppBar(
         title: const Text('Reports'),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.ios_share),
+            tooltip: 'Export report',
+            onPressed: () {
+              // Opens on whatever is being looked at, so "export this" needs no
+              // second thought about which range is selected.
+              ref.read(exportPeriodProvider.notifier).state = period;
+              Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (_) => const ExportReportScreen(),
+                ),
+              );
+            },
+          ),
           IconButton(
             icon: const Icon(Icons.table_rows_outlined),
             tooltip: 'Sales records',
@@ -148,7 +163,7 @@ class _PeriodSelector extends StatelessWidget {
       children: [
         SegmentedButton<PeriodKind>(
           segments: [
-            for (final kind in PeriodKind.values)
+            for (final kind in browsablePeriodKinds)
               ButtonSegment<PeriodKind>(value: kind, label: Text(kind.label)),
           ],
           selected: {period.kind},
