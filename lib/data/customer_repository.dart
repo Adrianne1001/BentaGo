@@ -1,4 +1,4 @@
-import 'package:sqflite/sqflite.dart';
+﻿import 'package:sqflite/sqflite.dart';
 
 import '../core/format.dart';
 import 'app_database.dart';
@@ -132,7 +132,7 @@ class CustomerRepository {
       'amount_centavos': -amountCentavos,
       'entered_at': now.millisecondsSinceEpoch,
       'day_key': Dates.dayKey(now),
-      'note': note ?? 'Bayad',
+      'note': note ?? 'Payment',
     });
   }
 
@@ -151,7 +151,7 @@ class CustomerRepository {
       'amount_centavos': amountCentavos,
       'entered_at': now.millisecondsSinceEpoch,
       'day_key': Dates.dayKey(now),
-      'note': note ?? 'Utang',
+      'note': note ?? 'Credit',
     });
   }
 

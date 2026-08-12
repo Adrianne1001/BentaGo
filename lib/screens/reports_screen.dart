@@ -11,8 +11,8 @@ import '../widgets/charts.dart';
 import '../widgets/common.dart';
 import 'sales_table_screen.dart';
 
-/// Ulat: one period at a time, day / week / month, driven by a single [Period]
-/// so all three views share the same queries and the same layout.
+/// One period at a time, day / week / month, driven by a single [Period] so all
+/// three views share the same queries and the same layout.
 class ReportsScreen extends ConsumerWidget {
   const ReportsScreen({super.key});
 
@@ -29,7 +29,7 @@ class ReportsScreen extends ConsumerWidget {
           note: result.note,
         );
     ref.refreshData();
-    if (context.mounted) showToast(context, 'Naitala ang gastos');
+    if (context.mounted) showToast(context, 'Expense recorded');
   }
 
   @override
@@ -39,11 +39,11 @@ class ReportsScreen extends ConsumerWidget {
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Ulat'),
+        title: const Text('Reports'),
         actions: [
           IconButton(
             icon: const Icon(Icons.table_rows_outlined),
-            tooltip: 'Talaan ng benta',
+            tooltip: 'Sales records',
             onPressed: () => Navigator.of(context).push(
               MaterialPageRoute<void>(
                 builder: (_) => SalesTableScreen(initialPeriod: period),
@@ -60,9 +60,9 @@ class ReportsScreen extends ConsumerWidget {
             onKindChanged: (kind) => ref
                 .read(selectedPeriodProvider.notifier)
                 .state = period.withKind(kind),
-            onShift: (steps) => ref
-                .read(selectedPeriodProvider.notifier)
-                .state = period.shift(steps),
+            onShift: (steps) =>
+                ref.read(selectedPeriodProvider.notifier).state =
+                    period.shift(steps),
           ),
           const SizedBox(height: 14),
 
@@ -84,8 +84,8 @@ class ReportsScreen extends ConsumerWidget {
               return Column(
                 children: [
                   SectionCard(
-                    title: 'Paraan ng bayad',
-                    subtitle: 'Ayon sa halaga ng benta sa panahong ito',
+                    title: 'Payment method',
+                    subtitle: 'By value of sales in this period',
                     child: ProportionBar(
                       slices: [
                         ProportionSlice(
@@ -94,9 +94,9 @@ class ReportsScreen extends ConsumerWidget {
                           color: context.colors.cashTint,
                         ),
                         ProportionSlice(
-                          label: 'Utang',
-                          value: data.utangSalesCentavos,
-                          color: context.colors.utangTint,
+                          label: 'Credit',
+                          value: data.creditSalesCentavos,
+                          color: context.colors.creditTint,
                         ),
                         ProportionSlice(
                           label: 'GCash',
@@ -149,10 +149,7 @@ class _PeriodSelector extends StatelessWidget {
         SegmentedButton<PeriodKind>(
           segments: [
             for (final kind in PeriodKind.values)
-              ButtonSegment<PeriodKind>(
-                value: kind,
-                label: Text(kind.label),
-              ),
+              ButtonSegment<PeriodKind>(value: kind, label: Text(kind.label)),
           ],
           selected: {period.kind},
           showSelectedIcon: false,
@@ -163,7 +160,7 @@ class _PeriodSelector extends StatelessWidget {
           children: [
             IconButton(
               icon: const Icon(Icons.chevron_left),
-              tooltip: 'Nauna',
+              tooltip: 'Previous',
               onPressed: () => onShift(-1),
             ),
             Expanded(
@@ -180,17 +177,15 @@ class _PeriodSelector extends StatelessWidget {
                   Text(
                     period.subLabel,
                     textAlign: TextAlign.center,
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: context.colors.muted,
-                    ),
+                    style:
+                        TextStyle(fontSize: 12, color: context.colors.muted),
                   ),
                 ],
               ),
             ),
             IconButton(
               icon: const Icon(Icons.chevron_right),
-              tooltip: 'Susunod',
+              tooltip: 'Next',
               // Nothing has happened in the future yet.
               onPressed: period.containsToday ? null : () => onShift(1),
             ),
@@ -222,7 +217,7 @@ class _SummaryGrid extends StatelessWidget {
                 ),
                 const SizedBox(height: 10),
                 Text(
-                  'Walang naitalang benta sa panahong ito.',
+                  'No sales recorded in this period.',
                   style: TextStyle(color: context.colors.muted),
                 ),
               ],
@@ -236,10 +231,10 @@ class _SummaryGrid extends StatelessWidget {
       children: [
         StatTile(
           large: true,
-          label: 'Kabuuang benta',
+          label: 'Total sales',
           value: Money.format(summary.revenueCentavos),
-          caption: '${summary.saleCount} benta · ${summary.itemCount} piraso · '
-              'katamtaman ${Money.formatShort(summary.averageSaleCentavos)}',
+          caption: '${summary.saleCount} sales · ${summary.itemCount} items · '
+              'avg ${Money.formatShort(summary.averageSaleCentavos)}',
           icon: Icons.trending_up,
         ),
         const SizedBox(height: 10),
@@ -247,10 +242,10 @@ class _SummaryGrid extends StatelessWidget {
           children: [
             Expanded(
               child: StatTile(
-                label: 'Kita bago gastos',
+                label: 'Profit before expenses',
                 value: Money.formatShort(summary.grossProfitCentavos),
                 caption: summary.profitIsEstimate
-                    ? 'Tinatayang kita lang -- may paninda na walang puhunan.'
+                    ? 'Estimated — some products have no cost set.'
                     : summary.marginPercent == null
                         ? null
                         : '${summary.marginPercent!.round()}% margin',
@@ -261,10 +256,10 @@ class _SummaryGrid extends StatelessWidget {
             const SizedBox(width: 10),
             Expanded(
               child: StatTile(
-                label: 'Gastos',
+                label: 'Expenses',
                 value: Money.formatShort(summary.expensesCentavos),
                 caption: summary.expensesCentavos == 0
-                    ? 'Wala pang naitalang gastos.'
+                    ? 'No expenses recorded.'
                     : null,
                 tone: StatTone.warn,
                 icon: Icons.receipt_outlined,
@@ -277,9 +272,9 @@ class _SummaryGrid extends StatelessWidget {
           children: [
             Expanded(
               child: StatTile(
-                label: 'Natirang kita',
+                label: 'Net profit',
                 value: Money.formatShort(summary.netProfitCentavos),
-                caption: 'Kita bawas gastos',
+                caption: 'Profit minus expenses',
                 tone: summary.netProfitCentavos >= 0
                     ? StatTone.good
                     : StatTone.danger,
@@ -289,12 +284,12 @@ class _SummaryGrid extends StatelessWidget {
             const SizedBox(width: 10),
             Expanded(
               child: StatTile(
-                label: 'Cash na natanggap',
+                label: 'Cash received',
                 value: Money.formatShort(summary.cashCollectedCentavos),
-                caption: summary.utangSalesCentavos > 0
-                    ? '${Money.formatShort(summary.utangSalesCentavos)} ang '
-                        'napunta sa utang'
-                    : 'Lahat ay bayad agad.',
+                caption: summary.creditSalesCentavos > 0
+                    ? '${Money.formatShort(summary.creditSalesCentavos)} went '
+                        'on credit'
+                    : 'Everything was paid on the spot.',
                 icon: Icons.payments_outlined,
               ),
             ),
@@ -317,20 +312,17 @@ class _TrendCard extends ConsumerWidget {
     if (period.kind == PeriodKind.day) {
       final hourly = ref.watch(hourlyStatsProvider(period));
       return SectionCard(
-        title: 'Kada oras',
-        subtitle: 'Kailan dumadagsa ang tao',
+        title: 'By hour',
+        subtitle: 'When the rush happens',
         child: AsyncBlock<List<HourBucket>>(
           value: hourly,
           loadingHeight: 180,
           builder: (buckets) {
             // Trim to trading hours so the chart is not mostly empty night.
             final active = buckets.where((b) => b.revenueCentavos > 0).toList();
-            final from = active.isEmpty
-                ? 6
-                : (active.first.hour - 1).clamp(0, 23);
-            final to = active.isEmpty
-                ? 21
-                : (active.last.hour + 1).clamp(0, 23);
+            final from =
+                active.isEmpty ? 6 : (active.first.hour - 1).clamp(0, 23);
+            final to = active.isEmpty ? 21 : (active.last.hour + 1).clamp(0, 23);
             final window =
                 buckets.where((b) => b.hour >= from && b.hour <= to).toList();
 
@@ -339,10 +331,7 @@ class _TrendCard extends ConsumerWidget {
               maxLabelEvery: window.length > 10 ? 3 : 2,
               bars: [
                 for (final bucket in window)
-                  ChartBar(
-                    label: bucket.label,
-                    value: bucket.revenueCentavos,
-                  ),
+                  ChartBar(label: bucket.label, value: bucket.revenueCentavos),
               ],
             );
           },
@@ -352,8 +341,8 @@ class _TrendCard extends ConsumerWidget {
 
     final series = ref.watch(dailySeriesProvider(period));
     return SectionCard(
-      title: 'Kada araw',
-      subtitle: 'Ang berde ay tinatayang kita',
+      title: 'By day',
+      subtitle: 'Green is estimated profit',
       child: AsyncBlock<List<DailyPoint>>(
         value: series,
         loadingHeight: 180,
@@ -389,8 +378,8 @@ class _YearTrendCard extends ConsumerWidget {
     final months = ref.watch(monthlySeriesProvider(12));
 
     return SectionCard(
-      title: 'Huling 12 buwan',
-      subtitle: 'Buwanang benta',
+      title: 'Last 12 months',
+      subtitle: 'Monthly sales',
       child: AsyncBlock<List<DailyPoint>>(
         value: months,
         loadingHeight: 180,
@@ -433,11 +422,11 @@ class _TopProductsCardState extends ConsumerState<_TopProductsCard> {
     final stats = ref.watch(topProductsProvider(widget.period));
 
     return SectionCard(
-      title: _showWorst ? 'Mabagal maubos' : 'Mabili',
-      subtitle: 'Ayon sa halaga ng nabenta',
+      title: _showWorst ? 'Slow movers' : 'Best sellers',
+      subtitle: 'By value sold',
       action: TextButton(
         onPressed: () => setState(() => _showWorst = !_showWorst),
-        child: Text(_showWorst ? 'Mabili' : 'Mabagal'),
+        child: Text(_showWorst ? 'Best' : 'Slowest'),
       ),
       child: AsyncBlock<List<ProductStat>>(
         value: stats,
@@ -448,7 +437,7 @@ class _TopProductsCardState extends ConsumerState<_TopProductsCard> {
           // crowd out the ones that are merely slow.
           final rows = _showWorst ? items.reversed.toList() : items;
           return RankedBarList(
-            emptyMessage: 'Wala pang benta sa panahong ito.',
+            emptyMessage: 'No sales in this period yet.',
             rows: [
               for (final stat in rows.take(8))
                 RankedBarRow(
@@ -474,12 +463,12 @@ class _CategoryCard extends ConsumerWidget {
     final stats = ref.watch(categoryStatsProvider(period));
 
     return SectionCard(
-      title: 'Ayon sa kategorya',
+      title: 'By category',
       child: AsyncBlock<List<CategoryStat>>(
         value: stats,
         loadingHeight: 140,
         builder: (items) => RankedBarList(
-          emptyMessage: 'Wala pang datos.',
+          emptyMessage: 'No data yet.',
           rows: [
             for (final stat in items)
               RankedBarRow(
@@ -506,18 +495,18 @@ class _ExpensesCard extends ConsumerWidget {
     final breakdown = ref.watch(expenseBreakdownProvider(period));
 
     return SectionCard(
-      title: 'Gastos',
-      subtitle: 'Kuryente, renta, pamasahe at iba pa',
+      title: 'Expenses',
+      subtitle: 'Electricity, rent, transport and so on',
       action: TextButton.icon(
         onPressed: onAdd,
         icon: const Icon(Icons.add, size: 18),
-        label: const Text('Magdagdag'),
+        label: const Text('Add'),
       ),
       child: AsyncBlock<List<Expense>>(
         value: breakdown,
         loadingHeight: 110,
         builder: (items) => RankedBarList(
-          emptyMessage: 'Wala pang naitalang gastos sa panahong ito.',
+          emptyMessage: 'No expenses recorded in this period.',
           rows: [
             for (final expense in items)
               RankedBarRow(
@@ -567,7 +556,7 @@ class _ExpenseDialogState extends State<_ExpenseDialog> {
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
-      title: const Text('Bagong gastos'),
+      title: const Text('New expense'),
       content: Form(
         key: _formKey,
         child: SingleChildScrollView(
@@ -588,19 +577,17 @@ class _ExpenseDialogState extends State<_ExpenseDialog> {
                 decoration: const InputDecoration(
                   prefixText: '₱ ',
                   hintText: '0.00',
-                  labelText: 'Halaga',
+                  labelText: 'Amount',
                 ),
                 validator: (raw) {
                   final parsed = Money.parse(raw ?? '');
-                  if (parsed == null || parsed <= 0) {
-                    return 'Maglagay ng halaga.';
-                  }
+                  if (parsed == null || parsed <= 0) return 'Enter an amount.';
                   return null;
                 },
               ),
               const SizedBox(height: 16),
               Text(
-                'Para saan?',
+                'What for?',
                 style: TextStyle(
                   fontSize: 12.5,
                   fontWeight: FontWeight.w600,
@@ -625,8 +612,8 @@ class _ExpenseDialogState extends State<_ExpenseDialog> {
                 controller: _note,
                 textCapitalization: TextCapitalization.sentences,
                 decoration: const InputDecoration(
-                  labelText: 'Paalala',
-                  hintText: 'Opsyonal',
+                  labelText: 'Note',
+                  hintText: 'Optional',
                 ),
               ),
             ],
@@ -636,7 +623,7 @@ class _ExpenseDialogState extends State<_ExpenseDialog> {
       actions: [
         TextButton(
           onPressed: () => Navigator.pop(context),
-          child: const Text('Kanselahin'),
+          child: const Text('Cancel'),
         ),
         FilledButton(
           onPressed: () {
@@ -650,7 +637,7 @@ class _ExpenseDialogState extends State<_ExpenseDialog> {
               ),
             );
           },
-          child: const Text('Itala'),
+          child: const Text('Record'),
         ),
       ],
     );

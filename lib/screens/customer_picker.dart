@@ -7,13 +7,10 @@ import '../data/models.dart';
 import '../state/providers.dart';
 import '../widgets/common.dart';
 
-/// Picks who is taking the utang. Adding a customer is inline rather than a
+/// Picks who is taking the credit. Adding a customer is inline rather than a
 /// separate screen -- a new name usually turns up mid-sale, with someone
 /// waiting at the window.
-Future<Customer?> showCustomerPicker(
-  BuildContext context,
-  WidgetRef ref,
-) async {
+Future<Customer?> showCustomerPicker(BuildContext context) async {
   return showModalBottomSheet<Customer>(
     context: context,
     isScrollControlled: true,
@@ -54,7 +51,7 @@ class _CustomerPickerSheetState extends ConsumerState<_CustomerPickerSheet> {
     } on Object catch (error) {
       if (mounted) {
         setState(() => _creating = false);
-        showToast(context, 'Hindi naidagdag: $error', isError: true);
+        showToast(context, 'Not added: $error', isError: true);
       }
     }
   }
@@ -78,7 +75,7 @@ class _CustomerPickerSheetState extends ConsumerState<_CustomerPickerSheet> {
                 children: [
                   const Expanded(
                     child: Text(
-                      'Sino ang umutang?',
+                      'Who is taking this on credit?',
                       style: TextStyle(
                         fontSize: 18,
                         fontWeight: FontWeight.w700,
@@ -87,7 +84,7 @@ class _CustomerPickerSheetState extends ConsumerState<_CustomerPickerSheet> {
                   ),
                   IconButton(
                     icon: const Icon(Icons.close),
-                    tooltip: 'Isara',
+                    tooltip: 'Close',
                     onPressed: () => Navigator.pop(context),
                   ),
                 ],
@@ -101,7 +98,7 @@ class _CustomerPickerSheetState extends ConsumerState<_CustomerPickerSheet> {
                 textCapitalization: TextCapitalization.words,
                 onChanged: (value) => setState(() => _query = value),
                 decoration: InputDecoration(
-                  hintText: 'Hanapin o maglagay ng pangalan',
+                  hintText: 'Search, or type a new name',
                   prefixIcon: const Icon(Icons.search),
                   suffixIcon: _query.isEmpty
                       ? null
@@ -124,22 +121,18 @@ class _CustomerPickerSheetState extends ConsumerState<_CustomerPickerSheet> {
                   final matches = query.isEmpty
                       ? all
                       : all
-                          .where(
-                            (c) => c.name.toLowerCase().contains(query),
-                          )
+                          .where((c) => c.name.toLowerCase().contains(query))
                           .toList();
 
-                  final exactExists = all.any(
-                    (c) => c.name.toLowerCase() == query,
-                  );
+                  final exactExists =
+                      all.any((c) => c.name.toLowerCase() == query);
                   final showCreate = query.isNotEmpty && !exactExists;
 
                   if (matches.isEmpty && !showCreate) {
                     return const EmptyState(
                       icon: Icons.people_outline,
-                      title: 'Wala pang customer',
-                      message:
-                          'I-type ang pangalan sa taas para magdagdag ng bago.',
+                      title: 'No customers yet',
+                      message: 'Type a name above to add someone new.',
                     );
                   }
 
@@ -165,8 +158,8 @@ class _CustomerPickerSheetState extends ConsumerState<_CustomerPickerSheet> {
                                     color: context.scheme.primary,
                                   ),
                           ),
-                          title: Text('Idagdag si "${_query.trim()}"'),
-                          subtitle: const Text('Bagong customer'),
+                          title: Text('Add "${_query.trim()}"'),
+                          subtitle: const Text('New customer'),
                           onTap: () => _createAndPick(_query),
                         ),
                       for (final customer in matches)
@@ -188,15 +181,16 @@ class _CustomerPickerSheetState extends ConsumerState<_CustomerPickerSheet> {
                           ),
                           title: Text(
                             customer.name,
-                            style: const TextStyle(fontWeight: FontWeight.w600),
+                            style:
+                                const TextStyle(fontWeight: FontWeight.w600),
                           ),
                           subtitle: customer.owes
                               ? Text(
-                                  'May utang na '
+                                  'Owes '
                                   '${Money.format(customer.balanceCentavos)}',
                                   style: TextStyle(color: context.colors.warn),
                                 )
-                              : const Text('Walang utang'),
+                              : const Text('Nothing owed'),
                           trailing: const Icon(Icons.chevron_right),
                           onTap: () => Navigator.pop(context, customer),
                         ),

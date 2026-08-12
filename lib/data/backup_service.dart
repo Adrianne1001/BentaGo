@@ -1,4 +1,4 @@
-import 'dart:io';
+﻿import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
@@ -13,13 +13,13 @@ extension BackupKindX on BackupKind {
   String get folder => switch (this) {
         BackupKind.monthly => 'monthly',
         BackupKind.manual => 'manual',
-        BackupKind.safety => 'bago-i-restore',
+        BackupKind.safety => 'before-restore',
       };
 
   String get label => switch (this) {
-        BackupKind.monthly => 'Buwanang backup',
-        BackupKind.manual => 'Manual na backup',
-        BackupKind.safety => 'Bago i-restore',
+        BackupKind.monthly => 'Monthly backup',
+        BackupKind.manual => 'Manual backup',
+        BackupKind.safety => 'Before restore',
       };
 }
 
@@ -74,9 +74,14 @@ class BackupResult {
 /// does. On-device backups protect against a corrupted database or a bad
 /// restore, not against a lost handset -- that is what [shareBackup] is for.
 class BackupService {
-  BackupService(this._app);
+  BackupService(this._app, {Directory? rootOverride})
+      : _rootOverride = rootOverride;
 
   final AppDatabase _app;
+
+  /// Test seam: points the whole service at a temp directory instead of
+  /// resolving app-scoped storage through platform bindings.
+  final Directory? _rootOverride;
 
   static const String lastMonthlyKey = 'backup.last_monthly_month';
   static const String lastManualKey = 'backup.last_manual_at';
@@ -87,6 +92,12 @@ class BackupService {
 
   /// Root of everything this service writes.
   Future<Directory> rootDirectory() async {
+    final override = _rootOverride;
+    if (override != null) {
+      if (!await override.exists()) await override.create(recursive: true);
+      return override;
+    }
+
     Directory base;
     if (!kIsWeb && Platform.isAndroid) {
       // App-scoped external storage: visible to the user, no permission needed.
@@ -146,13 +157,13 @@ class BackupService {
 
       return BackupResult(
         ok: true,
-        message: 'Na-save sa ${p.basename(folder.path)}/$baseName.db',
+        message: 'Saved to ${p.basename(folder.path)}/$baseName.db',
         file: result,
       );
     } on Object catch (error) {
       return BackupResult(
         ok: false,
-        message: 'Hindi na-save ang backup: $error',
+        message: 'Backup failed: $error',
       );
     }
   }
@@ -263,6 +274,45 @@ class BackupService {
     return all;
   }
 
+  /// Everything that could be restored from, including the safety copies taken
+  /// before previous restores.
+  ///
+  /// Restore offers this list rather than a system file browser. To bring a
+  /// backup in from somewhere else -- a new phone, or a file sent over
+  /// Messenger -- drop the `.db` into the folder [displayPath] reports and it
+  /// appears here.
+  Future<List<BackupFile>> listRestorable() async {
+    final all = <BackupFile>[
+      ...await listBackups(BackupKind.monthly),
+      ...await listBackups(BackupKind.manual),
+      ...await listBackups(BackupKind.safety),
+    ];
+
+    // Anything dropped straight into the root of the backups folder counts too.
+    final root = await rootDirectory();
+    final loose = await root
+        .list()
+        .where((e) => e is File && p.extension(e.path) == '.db')
+        .cast<File>()
+        .toList();
+    for (final file in loose) {
+      final stat = await file.stat();
+      final csv = File(p.setExtension(file.path, '.csv'));
+      all.add(
+        BackupFile(
+          kind: BackupKind.manual,
+          database: file,
+          csv: await csv.exists() ? csv : null,
+          createdAt: stat.modified,
+          sizeBytes: stat.size,
+        ),
+      );
+    }
+
+    all.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+    return all;
+  }
+
   Future<DateTime?> lastBackupAt() async {
     final all = await listAll();
     if (all.isEmpty) return null;
@@ -282,7 +332,7 @@ class BackupService {
       if (!await source.exists()) {
         return const BackupResult(
           ok: false,
-          message: 'Wala ang file na pinili.',
+          message: 'The chosen file is missing.',
         );
       }
 
@@ -290,8 +340,8 @@ class BackupService {
         return const BackupResult(
           ok: false,
           message:
-              'Hindi ito backup ng BentaGo. Pumili ng file na nagsisimula sa '
-              '"bentago-" at nagtatapos sa .db',
+              'That is not a BentaGo backup. Choose a file starting with '
+              '"bentago-" and ending in .db',
         );
       }
 
@@ -300,7 +350,7 @@ class BackupService {
       final safetyFolder = await _folderFor(BackupKind.safety);
       final safetyPath = p.join(
         safetyFolder.path,
-        'bago-i-restore-${Dates.fileStamp(DateTime.now())}.db',
+        'before-restore-${Dates.fileStamp(DateTime.now())}.db',
       );
       await _app.file.copy(safetyPath);
       await _prune(BackupKind.safety);
@@ -319,7 +369,7 @@ class BackupService {
 
       return BackupResult(
         ok: true,
-        message: 'Na-restore. Isara at buksan muli ang app.',
+        message: 'Restored. Close and reopen the app.',
         file: BackupFile(
           kind: BackupKind.safety,
           database: File(safetyPath),
@@ -330,7 +380,7 @@ class BackupService {
     } on Object catch (error) {
       return BackupResult(
         ok: false,
-        message: 'Hindi na-restore: $error',
+        message: 'Restore failed: $error',
       );
     }
   }
@@ -401,17 +451,17 @@ class BackupService {
       ..writeln(
         csvRow([
           'sale_id',
-          'petsa',
-          'oras',
-          'bayad',
+          'date',
+          'time',
+          'payment',
           'customer',
-          'produkto',
-          'dami',
-          'presyo',
-          'puhunan',
-          'kabuuan',
-          'kita',
-          'binawi',
+          'product',
+          'qty',
+          'price',
+          'cost',
+          'total',
+          'profit',
+          'cancelled',
           'note',
         ]),
       );
@@ -436,7 +486,7 @@ class BackupService {
           Money.plain((row['unit_cost'] as int?) ?? 0),
           Money.plain(total),
           Money.plain(total - cost),
-          ((row['voided'] as int?) ?? 0) == 1 ? 'oo' : '',
+          ((row['voided'] as int?) ?? 0) == 1 ? 'yes' : '',
           row['note'] ?? '',
         ]),
       );

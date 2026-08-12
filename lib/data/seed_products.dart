@@ -1,9 +1,10 @@
-/// A fresh install opens with a stocked shelf instead of an empty screen.
+/// A fresh install opens with a stocked price list instead of an empty screen.
 /// These are the goods that turn over in almost every sari-sari store, priced
-/// at rough 2026 street rates -- edit or delete any of them in Paninda.
+/// at rough 2026 street rates -- edit or delete any of them in Products.
 ///
-/// The point is that she can sell something in the first minute of using the
-/// app, rather than doing an hour of data entry before it does anything.
+/// Product names stay in Filipino because that is what is printed on the
+/// packet and what a customer asks for. Only the categories are in English, to
+/// match the rest of the interface.
 class SeedProduct {
   const SeedProduct(
     this.name,
@@ -22,61 +23,62 @@ class SeedProduct {
 
 const List<SeedProduct> seedProducts = [
   // Noodles and canned goods
-  SeedProduct('Lucky Me Pancit Canton', 1700, 1400, 'Pagkain', '🍜'),
-  SeedProduct('Lucky Me Beef Noodles', 1300, 1050, 'Pagkain', '🍜'),
-  SeedProduct('Argentina Corned Beef', 3500, 3000, 'Pagkain', '🥫'),
-  SeedProduct('555 Sardinas', 2500, 2150, 'Pagkain', '🐟'),
-  SeedProduct('Ligo Sardines', 2300, 1950, 'Pagkain', '🐟'),
+  SeedProduct('Lucky Me Pancit Canton', 1700, 1400, 'Food', '🍜'),
+  SeedProduct('Lucky Me Beef Noodles', 1300, 1050, 'Food', '🍜'),
+  SeedProduct('Argentina Corned Beef', 3500, 3000, 'Food', '🥫'),
+  SeedProduct('555 Sardinas', 2500, 2150, 'Food', '🐟'),
+  SeedProduct('Ligo Sardines', 2300, 1950, 'Food', '🐟'),
 
   // Coffee, milk, sugar
-  SeedProduct('Kopiko Blanca', 1000, 800, 'Kape', '☕'),
-  SeedProduct('Nescafe 3-in-1', 1200, 950, 'Kape', '☕'),
-  SeedProduct('Great Taste White', 1000, 800, 'Kape', '☕'),
-  SeedProduct('Bear Brand sachet', 1600, 1350, 'Gatas', '🥛'),
-  SeedProduct('Asukal (sachet)', 700, 550, 'Pagkain', '🧂'),
+  SeedProduct('Kopiko Blanca', 1000, 800, 'Coffee', '☕'),
+  SeedProduct('Nescafe 3-in-1', 1200, 950, 'Coffee', '☕'),
+  SeedProduct('Great Taste White', 1000, 800, 'Coffee', '☕'),
+  SeedProduct('Bear Brand sachet', 1600, 1350, 'Milk', '🥛'),
+  SeedProduct('Asukal (sachet)', 700, 550, 'Food', '🧂'),
 
   // Snacks
-  SeedProduct('Piattos', 2000, 1700, 'Meryenda', '🥔'),
-  SeedProduct('Nova', 2000, 1700, 'Meryenda', '🥔'),
-  SeedProduct('Chippy', 1400, 1150, 'Meryenda', '🌽'),
-  SeedProduct('Skyflakes', 900, 700, 'Meryenda', '🍘'),
-  SeedProduct('Rebisco Crackers', 800, 620, 'Meryenda', '🍘'),
-  SeedProduct('Maxx Candy', 200, 150, 'Kendi', '🍬'),
-  SeedProduct('Storck Candy', 200, 150, 'Kendi', '🍬'),
+  SeedProduct('Piattos', 2000, 1700, 'Snacks', '🥔'),
+  SeedProduct('Nova', 2000, 1700, 'Snacks', '🥔'),
+  SeedProduct('Chippy', 1400, 1150, 'Snacks', '🌽'),
+  SeedProduct('Skyflakes', 900, 700, 'Snacks', '🍘'),
+  SeedProduct('Rebisco Crackers', 800, 620, 'Snacks', '🍘'),
+  SeedProduct('Maxx Candy', 200, 150, 'Candy', '🍬'),
+  SeedProduct('Storck Candy', 200, 150, 'Candy', '🍬'),
 
   // Drinks
-  SeedProduct('Coke Mismo', 2500, 2150, 'Inumin', '🥤'),
-  SeedProduct('Royal Mismo', 2500, 2150, 'Inumin', '🥤'),
-  SeedProduct('Tubig (bottled)', 1500, 1100, 'Inumin', '💧'),
-  SeedProduct('Zesto Juice', 1200, 950, 'Inumin', '🧃'),
-  SeedProduct('Kopiko Lucky Day', 2000, 1700, 'Inumin', '🥤'),
+  SeedProduct('Coke Mismo', 2500, 2150, 'Drinks', '🥤'),
+  SeedProduct('Royal Mismo', 2500, 2150, 'Drinks', '🥤'),
+  SeedProduct('Tubig (bottled)', 1500, 1100, 'Drinks', '💧'),
+  SeedProduct('Zesto Juice', 1200, 950, 'Drinks', '🧃'),
+  SeedProduct('Kopiko Lucky Day', 2000, 1700, 'Drinks', '🥤'),
 
   // Household and personal care
-  SeedProduct('Palmolive sachet', 1000, 800, 'Sabon', '🧴'),
-  SeedProduct('Safeguard sachet', 1200, 950, 'Sabon', '🧼'),
-  SeedProduct('Tide sachet', 1200, 1000, 'Labada', '🧺'),
-  SeedProduct('Downy sachet', 1200, 1000, 'Labada', '🧺'),
-  SeedProduct('Colgate sachet', 1000, 800, 'Sabon', '🪥'),
-  SeedProduct('Kalamansi (piraso)', 300, 200, 'Sariwa', '🍋'),
-  SeedProduct('Itlog (piraso)', 1000, 850, 'Sariwa', '🥚'),
-  SeedProduct('Bawang (pack)', 1500, 1200, 'Sariwa', '🧄'),
-  SeedProduct('Sigarilyo (stick)', 1500, 1250, 'Iba pa', '🚬'),
-  SeedProduct('Yelo (bag)', 1000, 500, 'Iba pa', '🧊'),
+  SeedProduct('Palmolive sachet', 1000, 800, 'Toiletries', '🧴'),
+  SeedProduct('Safeguard sachet', 1200, 950, 'Toiletries', '🧼'),
+  SeedProduct('Tide sachet', 1200, 1000, 'Laundry', '🧺'),
+  SeedProduct('Downy sachet', 1200, 1000, 'Laundry', '🧺'),
+  SeedProduct('Colgate sachet', 1000, 800, 'Toiletries', '🪥'),
+  SeedProduct('Kalamansi (piraso)', 300, 200, 'Fresh', '🍋'),
+  SeedProduct('Itlog (piraso)', 1000, 850, 'Fresh', '🥚'),
+  SeedProduct('Bawang (pack)', 1500, 1200, 'Fresh', '🧄'),
+  SeedProduct('Sigarilyo (stick)', 1500, 1250, 'Other', '🚬'),
+  SeedProduct('Yelo (bag)', 1000, 500, 'Other', '🧊'),
 ];
 
-/// Offered as chips in the product form so categories stay consistent
-/// instead of drifting into "Snacks", "snack", "Meryenda" for the same shelf.
-const List<String> productCategories = [
-  'Pagkain',
-  'Meryenda',
-  'Inumin',
-  'Kape',
-  'Gatas',
-  'Kendi',
-  'Sabon',
-  'Labada',
-  'Sariwa',
-  'Iba pa',
+/// Starting suggestions in the product form. Categories are plain text on the
+/// product row, so anything typed in the form joins this list from then on --
+/// these are only the ones offered before any custom ones exist.
+const List<String> suggestedCategories = [
+  'Food',
+  'Snacks',
+  'Drinks',
+  'Coffee',
+  'Milk',
+  'Candy',
+  'Toiletries',
+  'Laundry',
+  'Fresh',
+  'Other',
 ];
 
 /// Quick-pick emoji for the product form. Purely optional -- a product with no

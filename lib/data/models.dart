@@ -1,48 +1,35 @@
-import '../core/format.dart';
-
-enum PaymentType { cash, utang, gcash }
+enum PaymentType { cash, credit, gcash }
 
 extension PaymentTypeX on PaymentType {
   String get code => name;
 
   String get label => switch (this) {
         PaymentType.cash => 'Cash',
-        PaymentType.utang => 'Utang',
+        PaymentType.credit => 'Credit',
+        PaymentType.gcash => 'GCash',
+      };
+
+  /// The local word for a tab. Shown alongside the English label where the
+  /// distinction matters, because this is what the store actually calls it.
+  String get localLabel => switch (this) {
+        PaymentType.cash => 'Cash',
+        PaymentType.credit => 'Utang',
         PaymentType.gcash => 'GCash',
       };
 
   static PaymentType fromCode(String? code) => switch (code) {
-        'utang' => PaymentType.utang,
+        // 'utang' was the stored code before the interface moved to English.
+        'credit' || 'utang' => PaymentType.credit,
         'gcash' => PaymentType.gcash,
         _ => PaymentType.cash,
       };
 }
 
-enum StockReason { restock, sale, spoilage, personal, correction }
-
-extension StockReasonX on StockReason {
-  String get code => name;
-
-  String get label => switch (this) {
-        StockReason.restock => 'Delivery',
-        StockReason.sale => 'Nabenta',
-        StockReason.spoilage => 'Sira / expired',
-        StockReason.personal => 'Kinuha sa bahay',
-        StockReason.correction => 'Pagwawasto',
-      };
-
-  static StockReason fromCode(String? code) => switch (code) {
-        'sale' => StockReason.sale,
-        'spoilage' => StockReason.spoilage,
-        'personal' => StockReason.personal,
-        'correction' => StockReason.correction,
-        _ => StockReason.restock,
-      };
-}
-
-/// A single sellable item. Sold by the piece only -- one product, one unit.
+/// A single sellable item: a name, a price, and optionally a cost.
+///
 /// Only [name] and [priceCentavos] are required; every other field may be
-/// blank, and the UI degrades gracefully when they are.
+/// blank, and the interface degrades gracefully when they are. There is no
+/// stock count -- the app never claims to know what is on the shelf.
 class Product {
   const Product({
     this.id,
@@ -54,9 +41,6 @@ class Product {
     this.emoji,
     this.barcode,
     this.unitLabel = 'pc',
-    this.stock = 0,
-    this.reorderLevel = 0,
-    this.trackStock = true,
     this.archived = false,
     this.createdAt,
     this.updatedAt,
@@ -71,16 +55,13 @@ class Product {
   final String? emoji;
   final String? barcode;
   final String unitLabel;
-  final int stock;
-  final int reorderLevel;
-  final bool trackStock;
   final bool archived;
   final DateTime? createdAt;
   final DateTime? updatedAt;
 
   /// Peso margin on one piece. Zero when no cost has been entered, which is
-  /// fine -- profit reporting simply treats those items as pure revenue and
-  /// the reports screen says so.
+  /// fine -- profit reporting treats those items as pure revenue and the
+  /// reports screen labels the figure as an estimate.
   int get marginCentavos => priceCentavos - costCentavos;
 
   bool get hasCost => costCentavos > 0;
@@ -89,11 +70,6 @@ class Product {
     if (priceCentavos <= 0 || !hasCost) return null;
     return marginCentavos / priceCentavos * 100;
   }
-
-  bool get isLowStock =>
-      trackStock && reorderLevel > 0 && stock <= reorderLevel;
-
-  bool get isOutOfStock => trackStock && stock <= 0;
 
   /// The letter shown on the tile when no emoji was chosen.
   String get initial => name.trim().isEmpty ? '?' : name.trim()[0].toUpperCase();
@@ -110,9 +86,6 @@ class Product {
         unitLabel: (row['unit_label'] as String?)?.trim().isNotEmpty == true
             ? row['unit_label'] as String
             : 'pc',
-        stock: (row['stock'] as int?) ?? 0,
-        reorderLevel: (row['reorder_level'] as int?) ?? 0,
-        trackStock: ((row['track_stock'] as int?) ?? 1) == 1,
         archived: ((row['archived'] as int?) ?? 0) == 1,
         createdAt: row['created_at'] == null
             ? null
@@ -134,9 +107,6 @@ class Product {
       'emoji': _blankToNull(emoji),
       'barcode': _blankToNull(barcode),
       'unit_label': unitLabel.trim().isEmpty ? 'pc' : unitLabel.trim(),
-      'stock': stock,
-      'reorder_level': reorderLevel,
-      'track_stock': trackStock ? 1 : 0,
       'archived': archived ? 1 : 0,
       'created_at': createdAt?.millisecondsSinceEpoch ?? now,
       'updated_at': now,
@@ -153,9 +123,6 @@ class Product {
     String? emoji,
     String? barcode,
     String? unitLabel,
-    int? stock,
-    int? reorderLevel,
-    bool? trackStock,
     bool? archived,
   }) {
     return Product(
@@ -168,9 +135,6 @@ class Product {
       emoji: emoji ?? this.emoji,
       barcode: barcode ?? this.barcode,
       unitLabel: unitLabel ?? this.unitLabel,
-      stock: stock ?? this.stock,
-      reorderLevel: reorderLevel ?? this.reorderLevel,
-      trackStock: trackStock ?? this.trackStock,
       archived: archived ?? this.archived,
       createdAt: createdAt,
       updatedAt: updatedAt,
@@ -231,9 +195,8 @@ class Customer {
         'phone': _blankToNull(phone),
         'note': _blankToNull(note),
         'archived': archived ? 1 : 0,
-        'created_at':
-            createdAt?.millisecondsSinceEpoch ??
-                DateTime.now().millisecondsSinceEpoch,
+        'created_at': createdAt?.millisecondsSinceEpoch ??
+            DateTime.now().millisecondsSinceEpoch,
       };
 }
 
@@ -303,8 +266,6 @@ class Sale {
 
   int get profitCentavos => totalCentavos - costCentavos;
 
-  String get dayKey => Dates.dayKey(soldAt);
-
   factory Sale.fromRow(Map<String, Object?> row, {List<SaleItem>? items}) =>
       Sale(
         id: row['id'] as int?,
@@ -355,40 +316,6 @@ class LedgerEntry {
       );
 }
 
-class StockMovement {
-  const StockMovement({
-    this.id,
-    required this.productId,
-    this.productName,
-    required this.delta,
-    required this.reason,
-    this.costCentavos = 0,
-    required this.movedAt,
-    this.note,
-  });
-
-  final int? id;
-  final int productId;
-  final String? productName;
-  final int delta;
-  final StockReason reason;
-  final int costCentavos;
-  final DateTime movedAt;
-  final String? note;
-
-  factory StockMovement.fromRow(Map<String, Object?> row) => StockMovement(
-        id: row['id'] as int?,
-        productId: (row['product_id'] as int?) ?? 0,
-        productName: row['product_name'] as String?,
-        delta: (row['delta'] as int?) ?? 0,
-        reason: StockReasonX.fromCode(row['reason'] as String?),
-        costCentavos: (row['cost_centavos'] as int?) ?? 0,
-        movedAt:
-            DateTime.fromMillisecondsSinceEpoch((row['moved_at'] as int?) ?? 0),
-        note: row['note'] as String?,
-      );
-}
-
 class Expense {
   const Expense({
     this.id,
@@ -407,7 +334,7 @@ class Expense {
   factory Expense.fromRow(Map<String, Object?> row) => Expense(
         id: row['id'] as int?,
         amountCentavos: (row['amount_centavos'] as int?) ?? 0,
-        category: row['category'] as String? ?? 'Iba pa',
+        category: row['category'] as String? ?? 'Other',
         spentAt:
             DateTime.fromMillisecondsSinceEpoch((row['spent_at'] as int?) ?? 0),
         note: row['note'] as String?,
@@ -415,12 +342,12 @@ class Expense {
 }
 
 const List<String> expenseCategories = [
-  'Paninda',
-  'Kuryente',
-  'Tubig',
-  'Renta',
-  'Pamasahe',
-  'Iba pa',
+  'Stock',
+  'Electricity',
+  'Water',
+  'Rent',
+  'Transport',
+  'Other',
 ];
 
 String? _blankToNull(String? value) {

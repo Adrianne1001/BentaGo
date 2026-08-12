@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 
 /// Palette drawn from Philippine banknotes: the P1000 blue-teal as primary,
 /// the P500 ochre as accent, P200 green for gains and P20 orange for warnings.
@@ -32,7 +32,7 @@ class AppColors extends ThemeExtension<AppColors> {
     required this.muted,
     required this.chartGrid,
     required this.cashTint,
-    required this.utangTint,
+    required this.creditTint,
     required this.gcashTint,
   });
 
@@ -43,7 +43,7 @@ class AppColors extends ThemeExtension<AppColors> {
   final Color muted;
   final Color chartGrid;
   final Color cashTint;
-  final Color utangTint;
+  final Color creditTint;
   final Color gcashTint;
 
   static const light = AppColors(
@@ -54,7 +54,7 @@ class AppColors extends ThemeExtension<AppColors> {
     muted: Color(0xFF647680),
     chartGrid: Color(0xFFE2E8E9),
     cashTint: BrandColors.good,
-    utangTint: BrandColors.warn,
+    creditTint: BrandColors.warn,
     gcashTint: Color(0xFF3F6BA8),
   );
 
@@ -66,7 +66,7 @@ class AppColors extends ThemeExtension<AppColors> {
     muted: Color(0xFF8298A5),
     chartGrid: Color(0xFF22343F),
     cashTint: BrandColors.goodDark,
-    utangTint: BrandColors.warnDark,
+    creditTint: BrandColors.warnDark,
     gcashTint: Color(0xFF89AEE0),
   );
 
@@ -79,7 +79,7 @@ class AppColors extends ThemeExtension<AppColors> {
     Color? muted,
     Color? chartGrid,
     Color? cashTint,
-    Color? utangTint,
+    Color? creditTint,
     Color? gcashTint,
   }) {
     return AppColors(
@@ -90,7 +90,7 @@ class AppColors extends ThemeExtension<AppColors> {
       muted: muted ?? this.muted,
       chartGrid: chartGrid ?? this.chartGrid,
       cashTint: cashTint ?? this.cashTint,
-      utangTint: utangTint ?? this.utangTint,
+      creditTint: creditTint ?? this.creditTint,
       gcashTint: gcashTint ?? this.gcashTint,
     );
   }
@@ -106,7 +106,7 @@ class AppColors extends ThemeExtension<AppColors> {
       muted: Color.lerp(muted, other.muted, t)!,
       chartGrid: Color.lerp(chartGrid, other.chartGrid, t)!,
       cashTint: Color.lerp(cashTint, other.cashTint, t)!,
-      utangTint: Color.lerp(utangTint, other.utangTint, t)!,
+      creditTint: Color.lerp(creditTint, other.creditTint, t)!,
       gcashTint: Color.lerp(gcashTint, other.gcashTint, t)!,
     );
   }

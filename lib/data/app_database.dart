@@ -4,7 +4,12 @@ import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:sqflite/sqflite.dart';
-import 'package:sqflite_common_ffi/sqflite_ffi.dart';
+// Narrowed to the two desktop-only symbols. The ffi package re-exports all of
+// sqflite, and importing it wholesale would make the sqflite import above look
+// redundant -- then deleting the ffi dependency (see README) would break this
+// file rather than just the one block that uses it.
+import 'package:sqflite_common_ffi/sqflite_ffi.dart'
+    show sqfliteFfiInit, databaseFactoryFfi;
 
 import 'seed_products.dart';
 
@@ -15,6 +20,10 @@ import 'seed_products.dart';
 ///   * money is always an INTEGER number of centavos, never a REAL;
 ///   * every sale stores `day_key` (local `yyyy-MM-dd`) so day / week / month
 ///     grouping is a plain string comparison instead of timezone arithmetic.
+///
+/// Inventory is deliberately not modelled. A product is a name, a price and
+/// optionally a cost -- there are no stock counts, so nothing can drift out of
+/// step with the shelf.
 class AppDatabase {
   AppDatabase._(this.db, this.file);
 
@@ -22,7 +31,11 @@ class AppDatabase {
   final File file;
 
   static const String fileName = 'bentago.db';
-  static const int schemaVersion = 1;
+
+  /// 2 added `products.ever_stocked`.
+  /// 3 removed inventory tracking altogether: the four stock columns and the
+  ///   `stock_movements` table.
+  static const int schemaVersion = 3;
 
   static Future<Directory> dataDirectory() async {
     return getApplicationDocumentsDirectory();
@@ -33,16 +46,29 @@ class AppDatabase {
     return p.join(dir.path, fileName);
   }
 
-  static Future<AppDatabase> open({bool seedIfEmpty = true}) async {
-    // sqflite ships a native implementation on Android/iOS only. Registering
-    // the FFI factory lets `flutter run -d windows` work for quick testing.
+  /// Registers the FFI factory on desktop. sqflite ships a native
+  /// implementation for Android and iOS only, so this is what lets
+  /// `flutter run -d windows` and `flutter test` touch a real database.
+  static void registerDesktopFactory() {
     if (!kIsWeb &&
         (Platform.isWindows || Platform.isLinux || Platform.isMacOS)) {
       sqfliteFfiInit();
       databaseFactory = databaseFactoryFfi;
     }
+  }
 
-    final path = await resolvePath();
+  static Future<AppDatabase> open({bool seedIfEmpty = true}) async {
+    registerDesktopFactory();
+    return openAt(await resolvePath(), seedIfEmpty: seedIfEmpty);
+  }
+
+  /// Opens the database at an explicit path. Separated from [open] so tests can
+  /// work against a temp directory without needing path_provider's platform
+  /// bindings.
+  static Future<AppDatabase> openAt(
+    String path, {
+    bool seedIfEmpty = true,
+  }) async {
     final database = await openDatabase(
       path,
       version: schemaVersion,
@@ -53,10 +79,7 @@ class AppDatabase {
         await _createSchema(db);
         if (seedIfEmpty) await _seed(db);
       },
-      onUpgrade: (db, from, to) async {
-        // Reserved for future migrations. Each step must be additive so an
-        // existing store never loses records on update.
-      },
+      onUpgrade: _upgrade,
     );
 
     return AppDatabase._(database, File(path));
@@ -70,6 +93,7 @@ class AppDatabase {
     // Products. Only `name` and `price_centavos` are required -- everything
     // else may be left blank when adding a product in a hurry.
     // Sold by the piece only: one product, one unit, no pack conversion.
+    // `category` is free text, so a new one can be typed at any time.
     batch.execute('''
       CREATE TABLE products (
         id             INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -81,9 +105,6 @@ class AppDatabase {
         emoji          TEXT,
         barcode        TEXT,
         unit_label     TEXT    NOT NULL DEFAULT 'pc',
-        stock          INTEGER NOT NULL DEFAULT 0,
-        reorder_level  INTEGER NOT NULL DEFAULT 0,
-        track_stock    INTEGER NOT NULL DEFAULT 1,
         archived       INTEGER NOT NULL DEFAULT 0,
         created_at     INTEGER NOT NULL,
         updated_at     INTEGER NOT NULL
@@ -93,6 +114,7 @@ class AppDatabase {
     batch.execute(
       'CREATE INDEX idx_products_archived ON products(archived, name)',
     );
+    batch.execute('CREATE INDEX idx_products_category ON products(category)');
 
     batch.execute('''
       CREATE TABLE customers (
@@ -158,23 +180,6 @@ class AppDatabase {
     );
 
     batch.execute('''
-      CREATE TABLE stock_movements (
-        id            INTEGER PRIMARY KEY AUTOINCREMENT,
-        product_id    INTEGER NOT NULL
-                        REFERENCES products(id) ON DELETE CASCADE,
-        delta         INTEGER NOT NULL,
-        reason        TEXT    NOT NULL,
-        cost_centavos INTEGER NOT NULL DEFAULT 0,
-        moved_at      INTEGER NOT NULL,
-        day_key       TEXT    NOT NULL,
-        note          TEXT
-      )
-    ''');
-    batch.execute(
-      'CREATE INDEX idx_movements_product ON stock_movements(product_id, moved_at DESC)',
-    );
-
-    batch.execute('''
       CREATE TABLE expenses (
         id              INTEGER PRIMARY KEY AUTOINCREMENT,
         amount_centavos INTEGER NOT NULL,
@@ -196,6 +201,44 @@ class AppDatabase {
     await batch.commit(noResult: true);
   }
 
+  /// Each step is additive or subtractive-but-lossless for anything the app
+  /// still uses, so an existing store never loses sales, products or credit.
+  static Future<void> _upgrade(Database db, int from, int to) async {
+    if (from < 2) {
+      await db.execute(
+        'ALTER TABLE products ADD COLUMN ever_stocked INTEGER NOT NULL DEFAULT 0',
+      );
+    }
+
+    if (from < 3) {
+      // Inventory tracking removed. DROP COLUMN keeps the table's identity, so
+      // sale_items' foreign key to products(id) is untouched -- rebuilding the
+      // table instead would fire ON DELETE SET NULL and orphan every line item.
+      //
+      // DROP COLUMN needs SQLite 3.35+. Android's bundled SQLite is older than
+      // that on Android 12 and below, so a failure here is tolerated: the
+      // columns simply stay behind, unread and harmless. A fresh install never
+      // takes this path at all.
+      for (final column in const [
+        'stock',
+        'reorder_level',
+        'track_stock',
+        'ever_stocked',
+      ]) {
+        try {
+          await db.execute('ALTER TABLE products DROP COLUMN $column');
+        } on Object {
+          // Column absent, indexed, or unsupported on this SQLite build.
+        }
+      }
+      await db.execute('DROP TABLE IF EXISTS stock_movements');
+      await db.execute(
+        'CREATE INDEX IF NOT EXISTS idx_products_category '
+        'ON products(category)',
+      );
+    }
+  }
+
   static Future<void> _seed(Database db) async {
     final now = DateTime.now().millisecondsSinceEpoch;
     final batch = db.batch();
@@ -207,9 +250,6 @@ class AppDatabase {
         'category': item.category,
         'emoji': item.emoji,
         'unit_label': 'pc',
-        'stock': 0,
-        'reorder_level': 5,
-        'track_stock': 1,
         'archived': 0,
         'created_at': now,
         'updated_at': now,

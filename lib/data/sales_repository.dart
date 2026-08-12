@@ -24,9 +24,9 @@ class SalesRepository {
   final AppDatabase _app;
   Database get _db => _app.db;
 
-  /// Records a sale, decrements stock for every tracked line, and -- when the
-  /// sale is on credit -- adds the matching charge to the customer's ledger.
-  /// All of it in one transaction, so a half-written sale is impossible.
+  /// Records a sale and, when it is on credit, adds the matching charge to the
+  /// customer's ledger. Both in one transaction, so a half-written sale with an
+  /// uncharged tab is impossible.
   Future<int> recordSale({
     required List<CartLine> lines,
     required PaymentType paymentType,
@@ -36,8 +36,8 @@ class SalesRepository {
     if (lines.isEmpty) {
       throw ArgumentError('Cannot record a sale with no items.');
     }
-    if (paymentType == PaymentType.utang && customerId == null) {
-      throw ArgumentError('An utang sale needs a customer.');
+    if (paymentType == PaymentType.credit && customerId == null) {
+      throw ArgumentError('A credit sale needs a customer.');
     }
 
     final now = DateTime.now();
@@ -68,32 +68,16 @@ class SalesRepository {
           'unit_cost_centavos': line.product.costCentavos,
           'line_total_centavos': line.lineTotalCentavos,
         });
-
-        if (line.product.trackStock && line.product.id != null) {
-          await txn.rawUpdate(
-            'UPDATE products SET stock = stock - ?, updated_at = ? WHERE id = ?',
-            [line.qty, now.millisecondsSinceEpoch, line.product.id],
-          );
-          await txn.insert('stock_movements', {
-            'product_id': line.product.id,
-            'delta': -line.qty,
-            'reason': StockReason.sale.code,
-            'cost_centavos': line.lineCostCentavos,
-            'moved_at': now.millisecondsSinceEpoch,
-            'day_key': Dates.dayKey(now),
-            'note': 'Benta #$saleId',
-          });
-        }
       }
 
-      if (paymentType == PaymentType.utang && customerId != null) {
+      if (paymentType == PaymentType.credit && customerId != null) {
         await txn.insert('ledger_entries', {
           'customer_id': customerId,
           'sale_id': saleId,
           'amount_centavos': total,
           'entered_at': now.millisecondsSinceEpoch,
           'day_key': Dates.dayKey(now),
-          'note': 'Benta #$saleId',
+          'note': 'Sale #$saleId',
         });
       }
 
@@ -101,8 +85,8 @@ class SalesRepository {
     });
   }
 
-  /// Reverses a sale: puts the stock back, cancels any utang charge, and marks
-  /// the row voided rather than deleting it, so the day's history stays honest.
+  /// Reverses a sale: cancels any credit charge and marks the row voided rather
+  /// than deleting it, so the day's history stays honest.
   Future<void> voidSale(int saleId) async {
     final now = DateTime.now();
 
@@ -116,42 +100,13 @@ class SalesRepository {
       if (saleRows.isEmpty) return;
       final sale = saleRows.first;
 
-      final items = await txn
-          .query('sale_items', where: 'sale_id = ?', whereArgs: [saleId]);
-
-      for (final item in items) {
-        final productId = item['product_id'] as int?;
-        final qty = (item['qty'] as int?) ?? 0;
-        if (productId == null || qty == 0) continue;
-
-        final productRows = await txn.query(
-          'products',
-          columns: ['track_stock'],
-          where: 'id = ?',
-          whereArgs: [productId],
-          limit: 1,
-        );
-        if (productRows.isEmpty) continue;
-        if (((productRows.first['track_stock'] as int?) ?? 1) != 1) continue;
-
-        await txn.rawUpdate(
-          'UPDATE products SET stock = stock + ?, updated_at = ? WHERE id = ?',
-          [qty, now.millisecondsSinceEpoch, productId],
-        );
-        await txn.insert('stock_movements', {
-          'product_id': productId,
-          'delta': qty,
-          'reason': StockReason.correction.code,
-          'cost_centavos': 0,
-          'moved_at': now.millisecondsSinceEpoch,
-          'day_key': Dates.dayKey(now),
-          'note': 'Binawi ang benta #$saleId',
-        });
-      }
-
       final customerId = sale['customer_id'] as int?;
-      final wasUtang = (sale['payment_type'] as String?) == 'utang';
-      if (wasUtang && customerId != null) {
+      final wasCredit = PaymentTypeX.fromCode(
+            sale['payment_type'] as String?,
+          ) ==
+          PaymentType.credit;
+
+      if (wasCredit && customerId != null) {
         // Reversing entry, not a delete -- the ledger is append-only.
         await txn.insert('ledger_entries', {
           'customer_id': customerId,
@@ -159,7 +114,7 @@ class SalesRepository {
           'amount_centavos': -((sale['total_centavos'] as int?) ?? 0),
           'entered_at': now.millisecondsSinceEpoch,
           'day_key': Dates.dayKey(now),
-          'note': 'Binawi ang benta #$saleId',
+          'note': 'Sale #$saleId cancelled',
         });
       }
 
@@ -184,8 +139,12 @@ class SalesRepository {
     ''', [id]);
     if (rows.isEmpty) return null;
 
-    final itemRows = await _db
-        .query('sale_items', where: 'sale_id = ?', whereArgs: [id], orderBy: 'id');
+    final itemRows = await _db.query(
+      'sale_items',
+      where: 'sale_id = ?',
+      whereArgs: [id],
+      orderBy: 'id',
+    );
     return Sale.fromRow(
       rows.first,
       items: itemRows.map(SaleItem.fromRow).toList(),
@@ -215,8 +174,13 @@ class SalesRepository {
         ..add(period.endKey);
     }
     if (paymentType != null) {
-      where.add('s.payment_type = ?');
-      args.add(paymentType.code);
+      if (paymentType == PaymentType.credit) {
+        // 'utang' is the legacy code for the same thing.
+        where.add("s.payment_type IN ('credit', 'utang')");
+      } else {
+        where.add('s.payment_type = ?');
+        args.add(paymentType.code);
+      }
     }
     if (customerId != null) {
       where.add('s.customer_id = ?');

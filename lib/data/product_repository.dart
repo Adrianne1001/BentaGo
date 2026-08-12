@@ -1,6 +1,5 @@
 import 'package:sqflite/sqflite.dart';
 
-import '../core/format.dart';
 import 'app_database.dart';
 import 'models.dart';
 
@@ -59,6 +58,9 @@ class ProductRepository {
     return Product.fromRow(rows.first);
   }
 
+  /// Categories are free text on the product row rather than their own table,
+  /// so a custom one exists the moment a product uses it and disappears when
+  /// the last product using it is gone. Nothing to manage or clean up.
   Future<List<String>> categoriesInUse() async {
     final rows = await _db.rawQuery('''
       SELECT DISTINCT category FROM products
@@ -68,37 +70,50 @@ class ProductRepository {
     return rows.map((r) => r['category'] as String).toList();
   }
 
-  /// Returns the new row id. Opening stock, when given, is also written as a
-  /// stock movement so the ledger of where stock came from stays complete.
-  Future<int> insert(Product product, {int openingStock = 0}) async {
-    return _db.transaction((txn) async {
-      final row = product.toRow()..remove('id');
-      row['stock'] = openingStock;
-      final id = await txn.insert('products', row);
-
-      if (openingStock != 0) {
-        final now = DateTime.now();
-        await txn.insert('stock_movements', {
-          'product_id': id,
-          'delta': openingStock,
-          'reason': StockReason.restock.code,
-          'cost_centavos': product.costCentavos * openingStock,
-          'moved_at': now.millisecondsSinceEpoch,
-          'day_key': Dates.dayKey(now),
-          'note': 'Simulang stock',
-        });
-      }
-      return id;
-    });
+  /// Category counts, for the manage-categories view.
+  Future<Map<String, int>> categoryCounts() async {
+    final rows = await _db.rawQuery('''
+      SELECT category, COUNT(*) AS c FROM products
+      WHERE archived = 0 AND category IS NOT NULL AND TRIM(category) <> ''
+      GROUP BY category
+      ORDER BY category COLLATE NOCASE ASC
+    ''');
+    return {
+      for (final row in rows) row['category'] as String: (row['c'] as int?) ?? 0,
+    };
   }
 
-  /// Updates the profile fields only. Stock is never edited here -- it moves
-  /// through [adjustStock] so every change has a reason attached to it.
+  /// Renames a category across every product carrying it.
+  Future<int> renameCategory(String from, String to) async {
+    final target = to.trim();
+    if (target.isEmpty) return 0;
+    return _db.update(
+      'products',
+      {'category': target, 'updated_at': DateTime.now().millisecondsSinceEpoch},
+      where: 'category = ?',
+      whereArgs: [from],
+    );
+  }
+
+  /// Clears a category from every product, leaving the products themselves.
+  Future<int> deleteCategory(String category) async {
+    return _db.update(
+      'products',
+      {'category': null, 'updated_at': DateTime.now().millisecondsSinceEpoch},
+      where: 'category = ?',
+      whereArgs: [category],
+    );
+  }
+
+  Future<int> insert(Product product) async {
+    final row = product.toRow()..remove('id');
+    return _db.insert('products', row);
+  }
+
   Future<void> update(Product product) async {
     if (product.id == null) return;
     final row = product.toRow()
       ..remove('id')
-      ..remove('stock')
       ..remove('created_at');
     await _db.update(
       'products',
@@ -126,97 +141,19 @@ class ProductRepository {
     await _db.delete('products', where: 'id = ?', whereArgs: [id]);
   }
 
-  Future<void> adjustStock({
-    required int productId,
-    required int delta,
-    required StockReason reason,
-    int costCentavos = 0,
-    String? note,
-    DatabaseExecutor? executor,
-  }) async {
-    final db = executor ?? _db;
-    final now = DateTime.now();
-
-    await db.rawUpdate(
-      'UPDATE products SET stock = stock + ?, updated_at = ? WHERE id = ?',
-      [delta, now.millisecondsSinceEpoch, productId],
-    );
-    await db.insert('stock_movements', {
-      'product_id': productId,
-      'delta': delta,
-      'reason': reason.code,
-      'cost_centavos': costCentavos,
-      'moved_at': now.millisecondsSinceEpoch,
-      'day_key': Dates.dayKey(now),
-      'note': note,
-    });
-  }
-
-  /// A delivery: adds stock and, when a new unit cost is supplied, updates the
-  /// product's cost basis so margin reporting follows the supplier's price.
-  Future<void> receiveDelivery({
-    required int productId,
-    required int qty,
-    int? newUnitCostCentavos,
-    String? note,
-  }) async {
-    await _db.transaction((txn) async {
-      if (newUnitCostCentavos != null && newUnitCostCentavos > 0) {
-        await txn.update(
-          'products',
-          {
-            'cost_centavos': newUnitCostCentavos,
-            'updated_at': DateTime.now().millisecondsSinceEpoch,
-          },
-          where: 'id = ?',
-          whereArgs: [productId],
-        );
-      }
-      await adjustStock(
-        productId: productId,
-        delta: qty,
-        reason: StockReason.restock,
-        costCentavos: (newUnitCostCentavos ?? 0) * qty,
-        note: note,
-        executor: txn,
-      );
-    });
-  }
-
-  Future<List<Product>> lowStock() async {
-    final rows = await _db.rawQuery('''
-      SELECT * FROM products
-      WHERE archived = 0 AND track_stock = 1
-        AND reorder_level > 0 AND stock <= reorder_level
-      ORDER BY (stock - reorder_level) ASC, name COLLATE NOCASE ASC
-    ''');
-    return rows.map(Product.fromRow).toList();
-  }
-
-  Future<List<StockMovement>> movements({int? productId, int limit = 200}) async {
-    final rows = await _db.rawQuery('''
-      SELECT m.*, p.name AS product_name
-      FROM stock_movements m
-      LEFT JOIN products p ON p.id = m.product_id
-      ${productId != null ? 'WHERE m.product_id = ?' : ''}
-      ORDER BY m.moved_at DESC
-      LIMIT ?
-    ''', [if (productId != null) productId, limit]);
-    return rows.map(StockMovement.fromRow).toList();
-  }
-
-  /// Total peso value of everything on the shelf, at cost.
-  Future<int> inventoryValueCentavos() async {
-    final rows = await _db.rawQuery('''
-      SELECT COALESCE(SUM(stock * cost_centavos), 0) AS value
-      FROM products WHERE archived = 0 AND track_stock = 1 AND stock > 0
-    ''');
-    return (rows.first['value'] as int?) ?? 0;
-  }
-
   Future<int> countActive() async {
     final rows = await _db
         .rawQuery('SELECT COUNT(*) AS c FROM products WHERE archived = 0');
+    return (rows.first['c'] as int?) ?? 0;
+  }
+
+  /// Products with no cost price on file. Profit reporting treats these as pure
+  /// margin, so the reports screen uses this to say the figure is an estimate.
+  Future<int> countWithoutCost() async {
+    final rows = await _db.rawQuery(
+      'SELECT COUNT(*) AS c FROM products '
+      'WHERE archived = 0 AND cost_centavos <= 0',
+    );
     return (rows.first['c'] as int?) ?? 0;
   }
 }

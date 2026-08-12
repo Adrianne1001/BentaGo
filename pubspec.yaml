@@ -25,9 +25,14 @@ dependencies:
   # Formatting
   intl: ^0.19.0
 
-  # Backup export / restore
+  # Sharing backups off the device.
+  #
+  # There is deliberately no file-picker dependency. Restore reads the app's own
+  # backup folder and offers a list, which is both friendlier than a system file
+  # browser and avoids a plugin that breaks under AGP 9 (it stops applying the
+  # Kotlin Gradle plugin and relies on built-in Kotlin, which the Flutter
+  # template disables).
   share_plus: ^10.0.0
-  file_picker: ^8.0.0
 
 dev_dependencies:
   flutter_test:

@@ -7,8 +7,8 @@ import '../data/models.dart';
 import '../state/providers.dart';
 import '../widgets/common.dart';
 
-/// One person's page in the listahan: what they owe now, and every charge and
-/// payment behind that number. The ledger is append-only, so a mistake is
+/// One person's page in the credit book: what they owe now, and every charge
+/// and payment behind that number. The ledger is append-only, so a mistake is
 /// corrected by a reversing entry rather than by editing history.
 class CustomerDetailScreen extends ConsumerWidget {
   const CustomerDetailScreen({super.key, required this.customerId});
@@ -22,12 +22,11 @@ class CustomerDetailScreen extends ConsumerWidget {
   ) async {
     final amount = await showAmountDialog(
       context,
-      title: 'Bayad ni ${customer.name}',
-      message: 'Utang ngayon: ${Money.format(customer.balanceCentavos)}',
-      confirmLabel: 'Itala ang bayad',
-      initialCentavos: customer.balanceCentavos > 0
-          ? customer.balanceCentavos
-          : null,
+      title: 'Payment from ${customer.name}',
+      message: 'Currently owes ${Money.format(customer.balanceCentavos)}',
+      confirmLabel: 'Record payment',
+      initialCentavos:
+          customer.balanceCentavos > 0 ? customer.balanceCentavos : null,
     );
     if (amount == null) return;
 
@@ -37,7 +36,7 @@ class CustomerDetailScreen extends ConsumerWidget {
         );
     ref.refreshData();
     if (context.mounted) {
-      showToast(context, 'Naitala ang bayad na ${Money.format(amount)}');
+      showToast(context, 'Payment of ${Money.format(amount)} recorded');
     }
   }
 
@@ -48,20 +47,20 @@ class CustomerDetailScreen extends ConsumerWidget {
   ) async {
     final amount = await showAmountDialog(
       context,
-      title: 'Dagdag na utang',
-      message: 'Para sa utang na hindi galing sa benta sa app -- '
-          'halimbawa, lumang balanse mula sa notebook.',
-      confirmLabel: 'Idagdag',
+      title: 'Add to credit',
+      message: 'For credit that did not come from a sale in the app — '
+          'an older balance carried over from the notebook, for example.',
+      confirmLabel: 'Add',
     );
     if (amount == null) return;
 
     await ref.read(customerRepositoryProvider).recordCharge(
           customerId: customerId,
           amountCentavos: amount,
-          note: 'Manu-manong dagdag',
+          note: 'Added manually',
         );
     ref.refreshData();
-    if (context.mounted) showToast(context, 'Naidagdag sa utang');
+    if (context.mounted) showToast(context, 'Added to credit');
   }
 
   Future<void> _deleteEntry(
@@ -71,11 +70,11 @@ class CustomerDetailScreen extends ConsumerWidget {
   ) async {
     final ok = await confirmDestructive(
       context,
-      title: 'Burahin ang talang ito?',
+      title: 'Delete this entry?',
       message: entry.isPayment
-          ? 'Babalik ang ${Money.format(-entry.amountCentavos)} sa utang.'
-          : 'Mababawas ang ${Money.format(entry.amountCentavos)} sa utang.',
-      confirmLabel: 'Burahin',
+          ? '${Money.format(-entry.amountCentavos)} goes back onto the balance.'
+          : '${Money.format(entry.amountCentavos)} comes off the balance.',
+      confirmLabel: 'Delete',
     );
     if (!ok) return;
 
@@ -89,9 +88,7 @@ class CustomerDetailScreen extends ConsumerWidget {
     final ledger = ref.watch(customerLedgerProvider(customerId));
 
     return Scaffold(
-      appBar: AppBar(
-        title: Text(customer.valueOrNull?.name ?? 'Customer'),
-      ),
+      appBar: AppBar(title: Text(customer.valueOrNull?.name ?? 'Customer')),
       body: AsyncBlock<Customer?>(
         value: customer,
         loadingHeight: 300,
@@ -99,7 +96,7 @@ class CustomerDetailScreen extends ConsumerWidget {
           if (person == null) {
             return const EmptyState(
               icon: Icons.person_off_outlined,
-              title: 'Wala na ang customer',
+              title: 'This customer is gone',
             );
           }
 
@@ -108,13 +105,13 @@ class CustomerDetailScreen extends ConsumerWidget {
             children: [
               StatTile(
                 large: true,
-                label: 'Utang ngayon',
+                label: 'Currently owes',
                 value: Money.format(person.balanceCentavos),
                 caption: person.balanceCentavos <= 0
-                    ? 'Wala nang utang. Bayad na lahat.'
+                    ? 'Nothing owed. All paid up.'
                     : person.lastActivity == null
                         ? null
-                        : 'Huling galaw: '
+                        : 'Last activity: '
                             '${Dates.relativeDay(person.lastActivity!)}',
                 tone: person.owes ? StatTone.warn : StatTone.good,
                 icon: Icons.account_balance_wallet_outlined,
@@ -129,7 +126,7 @@ class CustomerDetailScreen extends ConsumerWidget {
                           ? null
                           : () => _recordPayment(context, ref, person),
                       icon: const Icon(Icons.payments_outlined, size: 20),
-                      label: const Text('Bayad'),
+                      label: const Text('Payment'),
                     ),
                   ),
                   const SizedBox(width: 10),
@@ -137,7 +134,7 @@ class CustomerDetailScreen extends ConsumerWidget {
                     child: OutlinedButton.icon(
                       onPressed: () => _recordCharge(context, ref, person),
                       icon: const Icon(Icons.add, size: 20),
-                      label: const Text('Dagdag utang'),
+                      label: const Text('Add credit'),
                     ),
                   ),
                 ],
@@ -145,7 +142,7 @@ class CustomerDetailScreen extends ConsumerWidget {
               const SizedBox(height: 20),
 
               Text(
-                'KASAYSAYAN',
+                'HISTORY',
                 style: TextStyle(
                   fontSize: 10.5,
                   letterSpacing: 0.9,
@@ -164,7 +161,7 @@ class CustomerDetailScreen extends ConsumerWidget {
                       padding: const EdgeInsets.symmetric(vertical: 28),
                       child: Center(
                         child: Text(
-                          'Wala pang naitala.',
+                          'Nothing recorded yet.',
                           style: TextStyle(color: context.colors.muted),
                         ),
                       ),
@@ -172,7 +169,7 @@ class CustomerDetailScreen extends ConsumerWidget {
                   }
 
                   // Walk the entries newest-first, showing the balance as it
-                  // stood after each one -- the same way a paper ledger reads.
+                  // stood after each one -- the way a paper ledger reads.
                   var running = person.balanceCentavos;
                   final rows = <Widget>[];
 
@@ -193,7 +190,7 @@ class CustomerDetailScreen extends ConsumerWidget {
 
               const SizedBox(height: 16),
               Text(
-                'Pindutin nang matagal ang isang tala para burahin ito.',
+                'Press and hold an entry to delete it.',
                 style: TextStyle(fontSize: 12, color: context.colors.muted),
               ),
             ],
@@ -247,7 +244,7 @@ class _LedgerRow extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    isPayment ? 'Bayad' : (entry.note ?? 'Utang'),
+                    isPayment ? 'Payment' : (entry.note ?? 'Credit'),
                     style: const TextStyle(
                       fontSize: 14.5,
                       fontWeight: FontWeight.w600,
@@ -256,10 +253,8 @@ class _LedgerRow extends StatelessWidget {
                   Text(
                     '${Dates.relativeDay(entry.enteredAt)} · '
                     '${Dates.time(entry.enteredAt)}',
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: context.colors.muted,
-                    ),
+                    style:
+                        TextStyle(fontSize: 12, color: context.colors.muted),
                   ),
                 ],
               ),
@@ -278,7 +273,7 @@ class _LedgerRow extends StatelessWidget {
                   ),
                 ),
                 Text(
-                  'balanse ${Money.formatShort(balanceAfter)}',
+                  'balance ${Money.formatShort(balanceAfter)}',
                   style: TextStyle(
                     fontSize: 11.5,
                     color: context.colors.muted,

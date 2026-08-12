@@ -281,7 +281,7 @@ class PillTag extends StatelessWidget {
 
 Color paymentColor(BuildContext context, PaymentType type) => switch (type) {
       PaymentType.cash => context.colors.cashTint,
-      PaymentType.utang => context.colors.utangTint,
+      PaymentType.credit => context.colors.creditTint,
       PaymentType.gcash => context.colors.gcashTint,
     };
 
@@ -372,7 +372,7 @@ class AsyncBlock<T> extends StatelessWidget {
             const SizedBox(width: 10),
             Expanded(
               child: Text(
-                'May problema sa pagbasa ng datos.\n$error',
+                'Could not read the data.\n$error',
                 style: TextStyle(fontSize: 13, color: context.colors.danger),
               ),
             ),
@@ -411,7 +411,7 @@ class AppSearchField extends StatelessWidget {
             ? null
             : IconButton(
                 icon: const Icon(Icons.close, size: 20),
-                tooltip: 'Burahin',
+                tooltip: 'Clear',
                 onPressed: () => onChanged(''),
               ),
         contentPadding: const EdgeInsets.symmetric(vertical: 14),
@@ -514,7 +514,7 @@ Future<int?> showAmountDialog(
   BuildContext context, {
   required String title,
   String? message,
-  String confirmLabel = 'I-save',
+  String confirmLabel = 'Save',
   int? initialCentavos,
 }) async {
   final controller = TextEditingController(
@@ -555,8 +555,8 @@ Future<int?> showAmountDialog(
               ),
               validator: (raw) {
                 final parsed = Money.parse(raw ?? '');
-                if (parsed == null) return 'Maglagay ng halaga.';
-                if (parsed <= 0) return 'Dapat mas mataas sa zero.';
+                if (parsed == null) return 'Enter an amount.';
+                if (parsed <= 0) return 'Must be more than zero.';
                 return null;
               },
             ),
@@ -566,7 +566,7 @@ Future<int?> showAmountDialog(
       actions: [
         TextButton(
           onPressed: () => Navigator.pop(context),
-          child: const Text('Kanselahin'),
+          child: const Text('Cancel'),
         ),
         FilledButton(
           onPressed: () {
@@ -584,7 +584,7 @@ Future<bool> confirmDestructive(
   BuildContext context, {
   required String title,
   required String message,
-  String confirmLabel = 'Ituloy',
+  String confirmLabel = 'Continue',
 }) async {
   final result = await showDialog<bool>(
     context: context,
@@ -594,7 +594,7 @@ Future<bool> confirmDestructive(
       actions: [
         TextButton(
           onPressed: () => Navigator.pop(context, false),
-          child: const Text('Huwag'),
+          child: const Text('Cancel'),
         ),
         FilledButton(
           style: FilledButton.styleFrom(

@@ -9,8 +9,8 @@ import '../state/providers.dart';
 import '../widgets/common.dart';
 
 /// Product profiling, kept deliberately shallow: a name and a price is a
-/// complete product. Everything else sits under "Iba pang detalye", collapsed,
-/// so adding an item mid-rush is two fields and a save.
+/// complete product. Everything else sits under "More details", collapsed, so
+/// adding an item mid-rush is two fields and a save.
 class ProductFormScreen extends ConsumerStatefulWidget {
   const ProductFormScreen({super.key, this.product, this.initialName});
 
@@ -29,13 +29,10 @@ class _ProductFormScreenState extends ConsumerState<ProductFormScreen> {
   late final TextEditingController _cost;
   late final TextEditingController _description;
   late final TextEditingController _unitLabel;
-  late final TextEditingController _reorderLevel;
-  late final TextEditingController _openingStock;
   late final TextEditingController _barcode;
 
   String? _category;
   String? _emoji;
-  bool _trackStock = true;
   bool _showOptional = false;
   bool _saving = false;
 
@@ -46,7 +43,8 @@ class _ProductFormScreenState extends ConsumerState<ProductFormScreen> {
     super.initState();
     final product = widget.product;
 
-    _name = TextEditingController(text: product?.name ?? widget.initialName ?? '');
+    _name =
+        TextEditingController(text: product?.name ?? widget.initialName ?? '');
     _price = TextEditingController(
       text: product == null ? '' : Money.plain(product.priceCentavos),
     );
@@ -57,17 +55,10 @@ class _ProductFormScreenState extends ConsumerState<ProductFormScreen> {
     );
     _description = TextEditingController(text: product?.description ?? '');
     _unitLabel = TextEditingController(text: product?.unitLabel ?? 'pc');
-    _reorderLevel = TextEditingController(
-      text: product == null
-          ? '5'
-          : (product.reorderLevel == 0 ? '' : '${product.reorderLevel}'),
-    );
-    _openingStock = TextEditingController();
     _barcode = TextEditingController(text: product?.barcode ?? '');
 
     _category = product?.category;
     _emoji = product?.emoji;
-    _trackStock = product?.trackStock ?? true;
 
     // An existing product that already carries optional detail should show it
     // rather than hide the values behind a collapsed section.
@@ -85,32 +76,77 @@ class _ProductFormScreenState extends ConsumerState<ProductFormScreen> {
     _cost.dispose();
     _description.dispose();
     _unitLabel.dispose();
-    _reorderLevel.dispose();
-    _openingStock.dispose();
     _barcode.dispose();
     super.dispose();
+  }
+
+  /// Prompts for a category name and selects it. Nothing is written until the
+  /// product is saved -- a category exists only because a product carries it.
+  Future<void> _addCustomCategory() async {
+    final controller = TextEditingController();
+    final formKey = GlobalKey<FormState>();
+    final existing = ref.read(productCategoriesProvider).valueOrNull ??
+        const <String>[];
+
+    final created = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('New category'),
+        content: Form(
+          key: formKey,
+          child: TextFormField(
+            controller: controller,
+            autofocus: true,
+            textCapitalization: TextCapitalization.words,
+            decoration: const InputDecoration(
+              labelText: 'Category name',
+              hintText: 'e.g. Frozen, School supplies',
+            ),
+            validator: (value) {
+              final text = (value ?? '').trim();
+              if (text.isEmpty) return 'Enter a name.';
+              if (text.length > 30) return 'Keep it under 30 characters.';
+              final clash = existing.any(
+                (c) => c.toLowerCase() == text.toLowerCase(),
+              );
+              if (clash) return 'That category already exists.';
+              return null;
+            },
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () {
+              if (formKey.currentState?.validate() != true) return;
+              Navigator.pop(context, controller.text.trim());
+            },
+            child: const Text('Add'),
+          ),
+        ],
+      ),
+    );
+
+    if (created != null && mounted) setState(() => _category = created);
   }
 
   Future<void> _save() async {
     if (_formKey.currentState?.validate() != true || _saving) return;
     setState(() => _saving = true);
 
-    final price = Money.parse(_price.text) ?? 0;
-    final cost = Money.parse(_cost.text) ?? 0;
-
     final draft = Product(
       id: widget.product?.id,
       name: _name.text.trim(),
-      priceCentavos: price,
-      costCentavos: cost,
+      priceCentavos: Money.parse(_price.text) ?? 0,
+      costCentavos: Money.parse(_cost.text) ?? 0,
       description: _description.text,
       category: _category,
       emoji: _emoji,
       barcode: _barcode.text,
       unitLabel: _unitLabel.text.trim().isEmpty ? 'pc' : _unitLabel.text.trim(),
-      stock: widget.product?.stock ?? 0,
-      reorderLevel: int.tryParse(_reorderLevel.text.trim()) ?? 0,
-      trackStock: _trackStock,
       createdAt: widget.product?.createdAt,
     );
 
@@ -119,10 +155,7 @@ class _ProductFormScreenState extends ConsumerState<ProductFormScreen> {
       if (_isEditing) {
         await repo.update(draft);
       } else {
-        await repo.insert(
-          draft,
-          openingStock: int.tryParse(_openingStock.text.trim()) ?? 0,
-        );
+        await repo.insert(draft);
       }
       ref.refreshData();
 
@@ -130,14 +163,12 @@ class _ProductFormScreenState extends ConsumerState<ProductFormScreen> {
       Navigator.pop(context);
       showToast(
         context,
-        _isEditing
-            ? 'Na-update ang ${draft.name}'
-            : 'Naidagdag ang ${draft.name}',
+        _isEditing ? '${draft.name} updated' : '${draft.name} added',
       );
     } on Object catch (error) {
       if (mounted) {
         setState(() => _saving = false);
-        showToast(context, 'Hindi na-save: $error', isError: true);
+        showToast(context, 'Not saved: $error', isError: true);
       }
     }
   }
@@ -148,9 +179,20 @@ class _ProductFormScreenState extends ConsumerState<ProductFormScreen> {
     final cost = Money.parse(_cost.text) ?? 0;
     final margin = price - cost;
 
+    // Suggestions plus everything already in use, so a custom category shows up
+    // as a chip for every product added after it.
+    final inUse =
+        ref.watch(productCategoriesProvider).valueOrNull ?? const <String>[];
+    final categoryOptions = <String>{
+      ...suggestedCategories,
+      ...inUse,
+      if (_category != null) _category!,
+    }.toList()
+      ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
+
     return Scaffold(
       appBar: AppBar(
-        title: Text(_isEditing ? 'I-edit ang paninda' : 'Bagong paninda'),
+        title: Text(_isEditing ? 'Edit product' : 'New product'),
       ),
       body: Form(
         key: _formKey,
@@ -158,7 +200,7 @@ class _ProductFormScreenState extends ConsumerState<ProductFormScreen> {
           padding: const EdgeInsets.fromLTRB(16, 8, 16, 120),
           children: [
             Text(
-              'KAILANGAN',
+              'REQUIRED',
               style: TextStyle(
                 fontSize: 10.5,
                 letterSpacing: 0.9,
@@ -174,13 +216,11 @@ class _ProductFormScreenState extends ConsumerState<ProductFormScreen> {
               textCapitalization: TextCapitalization.words,
               textInputAction: TextInputAction.next,
               decoration: const InputDecoration(
-                labelText: 'Pangalan ng paninda',
-                hintText: 'Hal. Lucky Me Pancit Canton',
+                labelText: 'Product name',
+                hintText: 'e.g. Lucky Me Pancit Canton',
               ),
               validator: (value) {
-                if ((value ?? '').trim().isEmpty) {
-                  return 'Kailangan ang pangalan.';
-                }
+                if ((value ?? '').trim().isEmpty) return 'Enter a name.';
                 return null;
               },
             ),
@@ -197,14 +237,14 @@ class _ProductFormScreenState extends ConsumerState<ProductFormScreen> {
                 fontFeatures: [FontFeature.tabularFigures()],
               ),
               decoration: const InputDecoration(
-                labelText: 'Presyo ng benta',
+                labelText: 'Selling price',
                 prefixText: '₱ ',
                 hintText: '0.00',
               ),
               validator: (value) {
                 final parsed = Money.parse(value ?? '');
-                if (parsed == null) return 'Kailangan ang presyo.';
-                if (parsed <= 0) return 'Dapat mas mataas sa zero.';
+                if (parsed == null) return 'Enter a price.';
+                if (parsed <= 0) return 'Must be more than zero.';
                 return null;
               },
             ),
@@ -218,7 +258,7 @@ class _ProductFormScreenState extends ConsumerState<ProductFormScreen> {
                 child: Row(
                   children: [
                     Text(
-                      'IBA PANG DETALYE',
+                      'MORE DETAILS',
                       style: TextStyle(
                         fontSize: 10.5,
                         letterSpacing: 0.9,
@@ -228,7 +268,7 @@ class _ProductFormScreenState extends ConsumerState<ProductFormScreen> {
                     ),
                     const SizedBox(width: 8),
                     Text(
-                      'opsyonal',
+                      'all optional',
                       style: TextStyle(
                         fontSize: 11.5,
                         fontStyle: FontStyle.italic,
@@ -253,31 +293,45 @@ class _ProductFormScreenState extends ConsumerState<ProductFormScreen> {
                     const TextInputType.numberWithOptions(decimal: true),
                 onChanged: (_) => setState(() {}),
                 decoration: InputDecoration(
-                  labelText: 'Puhunan kada piraso',
+                  labelText: 'Cost per piece',
                   prefixText: '₱ ',
                   helperText: cost > 0 && price > 0
-                      ? 'Kita: ${Money.format(margin)} '
+                      ? 'Profit: ${Money.format(margin)} '
                           '(${(margin / price * 100).round()}%)'
-                      : 'Kung blangko, ang buong presyo ay ituturing na kita.',
+                      : 'Leave blank and the whole price counts as profit.',
                   helperMaxLines: 2,
                 ),
               ),
-              const SizedBox(height: 16),
+              const SizedBox(height: 18),
 
-              Text(
-                'Kategorya',
-                style: TextStyle(
-                  fontSize: 12.5,
-                  fontWeight: FontWeight.w600,
-                  color: context.colors.muted,
-                ),
+              Row(
+                children: [
+                  Text(
+                    'Category',
+                    style: TextStyle(
+                      fontSize: 12.5,
+                      fontWeight: FontWeight.w600,
+                      color: context.colors.muted,
+                    ),
+                  ),
+                  const Spacer(),
+                  TextButton.icon(
+                    onPressed: _addCustomCategory,
+                    icon: const Icon(Icons.add, size: 17),
+                    label: const Text('New'),
+                    style: TextButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(horizontal: 10),
+                      minimumSize: const Size(0, 34),
+                    ),
+                  ),
+                ],
               ),
-              const SizedBox(height: 8),
+              const SizedBox(height: 4),
               Wrap(
                 spacing: 6,
                 runSpacing: 6,
                 children: [
-                  for (final category in productCategories)
+                  for (final category in categoryOptions)
                     ChoiceChip(
                       label: Text(category),
                       selected: _category == category,
@@ -287,10 +341,10 @@ class _ProductFormScreenState extends ConsumerState<ProductFormScreen> {
                     ),
                 ],
               ),
-              const SizedBox(height: 16),
+              const SizedBox(height: 18),
 
               Text(
-                'Larawan (emoji)',
+                'Picture (emoji)',
                 style: TextStyle(
                   fontSize: 12.5,
                   fontWeight: FontWeight.w600,
@@ -311,8 +365,8 @@ class _ProductFormScreenState extends ConsumerState<ProductFormScreen> {
                 maxLines: 2,
                 textCapitalization: TextCapitalization.sentences,
                 decoration: const InputDecoration(
-                  labelText: 'Paalala',
-                  hintText: 'Hal. sa itaas na shelf, tabi ng kape',
+                  labelText: 'Note',
+                  hintText: 'e.g. top shelf, beside the coffee',
                 ),
               ),
               const SizedBox(height: 12),
@@ -320,8 +374,8 @@ class _ProductFormScreenState extends ConsumerState<ProductFormScreen> {
               TextFormField(
                 controller: _unitLabel,
                 decoration: const InputDecoration(
-                  labelText: 'Tawag sa yunit',
-                  helperText: 'Isahan lang ang benta. Hal. pc, sachet, bote.',
+                  labelText: 'Unit name',
+                  helperText: 'Sold one at a time. e.g. pc, sachet, bottle.',
                 ),
               ),
               const SizedBox(height: 12),
@@ -331,44 +385,9 @@ class _ProductFormScreenState extends ConsumerState<ProductFormScreen> {
                 keyboardType: TextInputType.number,
                 decoration: const InputDecoration(
                   labelText: 'Barcode',
-                  helperText: 'Para sa paghahanap. Hindi kailangan.',
+                  helperText: 'For searching. Not required.',
                 ),
               ),
-              const SizedBox(height: 20),
-
-              SwitchListTile(
-                value: _trackStock,
-                contentPadding: EdgeInsets.zero,
-                title: const Text('Bilangin ang stock'),
-                subtitle: const Text(
-                  'Patayin para sa paninda na walang tiyak na bilang, '
-                  'gaya ng yelo o tingi mula sa sako.',
-                ),
-                onChanged: (value) => setState(() => _trackStock = value),
-              ),
-
-              if (_trackStock) ...[
-                const SizedBox(height: 8),
-                TextFormField(
-                  controller: _reorderLevel,
-                  keyboardType: TextInputType.number,
-                  decoration: const InputDecoration(
-                    labelText: 'Sabihan kapag ganito na lang ang natitira',
-                    helperText: 'Iwanang blangko para hindi paalalahanan.',
-                  ),
-                ),
-                if (!_isEditing) ...[
-                  const SizedBox(height: 12),
-                  TextFormField(
-                    controller: _openingStock,
-                    keyboardType: TextInputType.number,
-                    decoration: const InputDecoration(
-                      labelText: 'Ilan ang meron ngayon?',
-                      helperText: 'Maitatala ito bilang unang delivery.',
-                    ),
-                  ),
-                ],
-              ],
             ],
           ],
         ),
@@ -387,7 +406,7 @@ class _ProductFormScreenState extends ConsumerState<ProductFormScreen> {
                       color: Colors.white,
                     ),
                   )
-                : Text(_isEditing ? 'I-save ang pagbabago' : 'Idagdag'),
+                : Text(_isEditing ? 'Save changes' : 'Add product'),
           ),
         ),
       ),

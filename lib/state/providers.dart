@@ -27,7 +27,7 @@ final backupServiceProvider =
     Provider((ref) => BackupService(ref.watch(databaseProvider)));
 
 /// Bumped after every write. Read queries watch it, so recording a sale
-/// refreshes the dashboard, the stock list and the reports at once without
+/// refreshes the dashboard, the product list and the reports at once without
 /// each screen having to know what the others need.
 final dataVersionProvider = StateProvider<int>((ref) => 0);
 
@@ -65,20 +65,19 @@ final productCategoriesProvider = FutureProvider<List<String>>((ref) async {
   return ref.watch(productRepositoryProvider).categoriesInUse();
 });
 
-final lowStockProvider = FutureProvider<List<Product>>((ref) async {
+final categoryCountsProvider = FutureProvider<Map<String, int>>((ref) async {
   ref.watch(dataVersionProvider);
-  return ref.watch(productRepositoryProvider).lowStock();
+  return ref.watch(productRepositoryProvider).categoryCounts();
 });
 
-final inventoryValueProvider = FutureProvider<int>((ref) async {
+final productCountProvider = FutureProvider<int>((ref) async {
   ref.watch(dataVersionProvider);
-  return ref.watch(productRepositoryProvider).inventoryValueCentavos();
+  return ref.watch(productRepositoryProvider).countActive();
 });
 
-final stockMovementsProvider =
-    FutureProvider.family<List<StockMovement>, int?>((ref, productId) async {
+final productsWithoutCostProvider = FutureProvider<int>((ref) async {
   ref.watch(dataVersionProvider);
-  return ref.watch(productRepositoryProvider).movements(productId: productId);
+  return ref.watch(productRepositoryProvider).countWithoutCost();
 });
 
 // --- customers ------------------------------------------------------------
@@ -116,9 +115,8 @@ final debtorCountProvider = FutureProvider<int>((ref) async {
 
 // --- reporting ------------------------------------------------------------
 
-/// The period the Ulat screen is looking at. Starts on today.
-final selectedPeriodProvider =
-    StateProvider<Period>((ref) => Period.today());
+/// The period the Reports screen is looking at. Starts on today.
+final selectedPeriodProvider = StateProvider<Period>((ref) => Period.today());
 
 final periodSummaryProvider =
     FutureProvider.family<PeriodSummary, Period>((ref, period) async {
@@ -168,7 +166,7 @@ final expenseBreakdownProvider =
   return ref.watch(reportRepositoryProvider).expenseBreakdown(period);
 });
 
-/// Today's numbers, used by the dashboard regardless of what the Ulat screen
+/// Today's numbers, used by the dashboard regardless of what the Reports screen
 /// is currently showing.
 final todaySummaryProvider = FutureProvider<PeriodSummary>((ref) async {
   ref.watch(dataVersionProvider);
@@ -222,8 +220,7 @@ class SalesQuery {
   }) {
     return SalesQuery(
       period: clearPeriod ? null : (period ?? this.period),
-      paymentType:
-          clearPaymentType ? null : (paymentType ?? this.paymentType),
+      paymentType: clearPaymentType ? null : (paymentType ?? this.paymentType),
       search: search ?? this.search,
       includeVoided: includeVoided ?? this.includeVoided,
       orderBy: orderBy ?? this.orderBy,
@@ -263,8 +260,7 @@ final salesTableProvider = FutureProvider<List<Sale>>((ref) async {
       );
 });
 
-final saleDetailProvider =
-    FutureProvider.family<Sale?, int>((ref, id) async {
+final saleDetailProvider = FutureProvider.family<Sale?, int>((ref, id) async {
   ref.watch(dataVersionProvider);
   return ref.watch(salesRepositoryProvider).byId(id);
 });
@@ -280,6 +276,12 @@ final recentSalesProvider =
 final backupListProvider = FutureProvider<List<BackupFile>>((ref) async {
   ref.watch(dataVersionProvider);
   return ref.watch(backupServiceProvider).listAll();
+});
+
+final restorableBackupsProvider =
+    FutureProvider<List<BackupFile>>((ref) async {
+  ref.watch(dataVersionProvider);
+  return ref.watch(backupServiceProvider).listRestorable();
 });
 
 final backupPathProvider = FutureProvider<String>((ref) async {

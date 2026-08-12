@@ -1,4 +1,4 @@
-import 'package:sqflite/sqflite.dart';
+﻿import 'package:sqflite/sqflite.dart';
 
 import '../core/format.dart';
 import '../core/period.dart';
@@ -6,7 +6,7 @@ import 'app_database.dart';
 import 'models.dart';
 
 /// Headline numbers for one period. Revenue is recognised when the sale
-/// happens, including utang, while [cashCollectedCentavos] tracks money that
+/// happens, including credit sales, while [cashCollectedCentavos] tracks money that
 /// actually reached the drawer -- the two differ in any store that runs a tab,
 /// and conflating them is how owners end up thinking they are richer than
 /// they are.
@@ -18,9 +18,9 @@ class PeriodSummary {
     this.saleCount = 0,
     this.itemCount = 0,
     this.cashSalesCentavos = 0,
-    this.utangSalesCentavos = 0,
+    this.creditSalesCentavos = 0,
     this.gcashSalesCentavos = 0,
-    this.utangPaymentsCentavos = 0,
+    this.creditPaymentsCentavos = 0,
     this.expensesCentavos = 0,
     this.costCoverage = 0,
   });
@@ -31,9 +31,9 @@ class PeriodSummary {
   final int saleCount;
   final int itemCount;
   final int cashSalesCentavos;
-  final int utangSalesCentavos;
+  final int creditSalesCentavos;
   final int gcashSalesCentavos;
-  final int utangPaymentsCentavos;
+  final int creditPaymentsCentavos;
   final int expensesCentavos;
 
   /// Share of revenue whose items had a cost price on file, 0..1. When this is
@@ -44,9 +44,9 @@ class PeriodSummary {
   int get grossProfitCentavos => revenueCentavos - costCentavos;
   int get netProfitCentavos => grossProfitCentavos - expensesCentavos;
 
-  /// Money in the drawer: paid-at-the-window sales plus utang settled today.
+  /// Money in the drawer: paid-at-the-window sales plus credit settled today.
   int get cashCollectedCentavos =>
-      cashSalesCentavos + gcashSalesCentavos + utangPaymentsCentavos;
+      cashSalesCentavos + gcashSalesCentavos + creditPaymentsCentavos;
 
   double? get marginPercent {
     if (revenueCentavos <= 0) return null;
@@ -140,8 +140,10 @@ class ReportRepository {
         COUNT(*)                         AS sale_count,
         COALESCE(SUM(CASE WHEN payment_type = 'cash'
                      THEN total_centavos ELSE 0 END), 0) AS cash_sales,
-        COALESCE(SUM(CASE WHEN payment_type = 'utang'
-                     THEN total_centavos ELSE 0 END), 0) AS utang_sales,
+        -- 'utang' is the code credit sales were stored under before the
+        -- interface moved to English. Matching both keeps old rows counted.
+        COALESCE(SUM(CASE WHEN payment_type IN ('credit', 'utang')
+                     THEN total_centavos ELSE 0 END), 0) AS credit_sales,
         COALESCE(SUM(CASE WHEN payment_type = 'gcash'
                      THEN total_centavos ELSE 0 END), 0) AS gcash_sales
       FROM sales
@@ -160,7 +162,7 @@ class ReportRepository {
     ''', args);
     final items = itemRows.first;
 
-    // Payments recorded against utang inside this period. Stored negative,
+    // Payments recorded against credit inside this period. Stored negative,
     // so flip the sign to report money received.
     final paymentRows = await _db.rawQuery('''
       SELECT COALESCE(SUM(-amount_centavos), 0) AS paid
@@ -183,9 +185,9 @@ class ReportRepository {
       saleCount: (sales['sale_count'] as int?) ?? 0,
       itemCount: (items['item_count'] as int?) ?? 0,
       cashSalesCentavos: (sales['cash_sales'] as int?) ?? 0,
-      utangSalesCentavos: (sales['utang_sales'] as int?) ?? 0,
+      creditSalesCentavos: (sales['credit_sales'] as int?) ?? 0,
       gcashSalesCentavos: (sales['gcash_sales'] as int?) ?? 0,
-      utangPaymentsCentavos: (paymentRows.first['paid'] as int?) ?? 0,
+      creditPaymentsCentavos: (paymentRows.first['paid'] as int?) ?? 0,
       expensesCentavos: (expenseRows.first['spent'] as int?) ?? 0,
       costCoverage: revenue == 0 ? 1 : costedRevenue / revenue,
     );
@@ -293,7 +295,7 @@ class ReportRepository {
 
   Future<List<CategoryStat>> byCategory(Period period) async {
     final rows = await _db.rawQuery('''
-      SELECT COALESCE(NULLIF(TRIM(p.category), ''), 'Walang kategorya')
+      SELECT COALESCE(NULLIF(TRIM(p.category), ''), 'No category')
                AS category,
              COALESCE(SUM(i.qty), 0) AS qty,
              COALESCE(SUM(i.line_total_centavos), 0) AS revenue
@@ -308,7 +310,7 @@ class ReportRepository {
     return rows
         .map(
           (r) => CategoryStat(
-            category: r['category'] as String? ?? 'Walang kategorya',
+            category: r['category'] as String? ?? 'No category',
             qty: (r['qty'] as int?) ?? 0,
             revenueCentavos: (r['revenue'] as int?) ?? 0,
           ),

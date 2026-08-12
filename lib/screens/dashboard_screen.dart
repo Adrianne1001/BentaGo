@@ -4,7 +4,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../core/format.dart';
 import '../core/period.dart';
 import '../core/theme.dart';
-import '../data/models.dart';
 import '../data/report_repository.dart';
 import '../state/providers.dart';
 import '../widgets/charts.dart';
@@ -13,8 +12,8 @@ import 'reports_screen.dart';
 import 'sales_table_screen.dart';
 import 'settings_screen.dart';
 
-/// The closing-time screen: what came in today, what is owed, what is running
-/// out. Summary before detail, and every number is one tap from the records
+/// The closing-time screen: what came in today, what is owed, how the week is
+/// going. Summary before detail, and every number is one tap from the records
 /// behind it.
 class DashboardScreen extends ConsumerWidget {
   const DashboardScreen({super.key});
@@ -25,10 +24,8 @@ class DashboardScreen extends ConsumerWidget {
     final week = ref.watch(thisWeekSummaryProvider);
     final month = ref.watch(thisMonthSummaryProvider);
     final recent = ref.watch(recentDaysProvider(7));
-    final lowStock = ref.watch(lowStockProvider);
     final outstanding = ref.watch(totalOutstandingProvider);
     final debtors = ref.watch(debtorCountProvider);
-    final inventoryValue = ref.watch(inventoryValueProvider);
 
     return Scaffold(
       appBar: AppBar(
@@ -36,7 +33,7 @@ class DashboardScreen extends ConsumerWidget {
         actions: [
           IconButton(
             icon: const Icon(Icons.table_rows_outlined),
-            tooltip: 'Talaan ng benta',
+            tooltip: 'Sales records',
             onPressed: () => Navigator.of(context).push(
               MaterialPageRoute<void>(builder: (_) => const SalesTableScreen()),
             ),
@@ -75,15 +72,15 @@ class DashboardScreen extends ConsumerWidget {
             // Seven-day trend. Today is painted in the accent so the eye lands
             // on it without needing a legend.
             SectionCard(
-              title: 'Huling 7 araw',
-              subtitle: 'Benta kada araw. Ang berde ay tinatayang kita.',
+              title: 'Last 7 days',
+              subtitle: 'Sales per day. Green is estimated profit.',
               action: TextButton(
                 onPressed: () => Navigator.of(context).push(
                   MaterialPageRoute<void>(
                     builder: (_) => const ReportsScreen(),
                   ),
                 ),
-                child: const Text('Buong ulat'),
+                child: const Text('Full report'),
               ),
               child: AsyncBlock<List<DailyPoint>>(
                 value: recent,
@@ -94,7 +91,6 @@ class DashboardScreen extends ConsumerWidget {
                     children: [
                       BarChartView(
                         height: 176,
-                        maxLabelEvery: 1,
                         bars: [
                           for (final point in points)
                             ChartBar(
@@ -123,10 +119,10 @@ class DashboardScreen extends ConsumerWidget {
                     value: week,
                     loadingHeight: 96,
                     builder: (summary) => StatTile(
-                      label: 'Ngayong linggo',
+                      label: 'This week',
                       value: Money.formatShort(summary.revenueCentavos),
-                      caption: '${summary.saleCount} benta · '
-                          'kita ${Money.formatShort(summary.grossProfitCentavos)}',
+                      caption: '${summary.saleCount} sales · '
+                          '${Money.formatShort(summary.grossProfitCentavos)} profit',
                       icon: Icons.calendar_view_week,
                       onTap: () => _openReports(context, ref, PeriodKind.week),
                     ),
@@ -138,10 +134,10 @@ class DashboardScreen extends ConsumerWidget {
                     value: month,
                     loadingHeight: 96,
                     builder: (summary) => StatTile(
-                      label: 'Ngayong buwan',
+                      label: 'This month',
                       value: Money.formatShort(summary.revenueCentavos),
-                      caption: '${summary.saleCount} benta · '
-                          'kita ${Money.formatShort(summary.grossProfitCentavos)}',
+                      caption: '${summary.saleCount} sales · '
+                          '${Money.formatShort(summary.grossProfitCentavos)} profit',
                       icon: Icons.calendar_month,
                       onTap: () => _openReports(context, ref, PeriodKind.month),
                     ),
@@ -159,7 +155,7 @@ class DashboardScreen extends ConsumerWidget {
                 return Column(
                   children: [
                     SectionCard(
-                      title: 'Paano nagbayad ngayon',
+                      title: 'How people paid today',
                       child: ProportionBar(
                         slices: [
                           ProportionSlice(
@@ -168,9 +164,9 @@ class DashboardScreen extends ConsumerWidget {
                             color: context.colors.cashTint,
                           ),
                           ProportionSlice(
-                            label: 'Utang',
-                            value: summary.utangSalesCentavos,
-                            color: context.colors.utangTint,
+                            label: 'Credit',
+                            value: summary.creditSalesCentavos,
+                            color: context.colors.creditTint,
                           ),
                           ProportionSlice(
                             label: 'GCash',
@@ -186,7 +182,9 @@ class DashboardScreen extends ConsumerWidget {
               },
             ),
 
-            _TopProductsCard(period: Period.of(PeriodKind.week, DateTime.now())),
+            _TopProductsCard(
+              period: Period.of(PeriodKind.week, DateTime.now()),
+            ),
             const SizedBox(height: 10),
 
             AsyncBlock<int>(
@@ -195,43 +193,24 @@ class DashboardScreen extends ConsumerWidget {
               builder: (total) {
                 final count = debtors.valueOrNull ?? 0;
                 if (total == 0) {
-                  return StatTile(
-                    label: 'Utang sa labas',
-                    value: 'Wala',
-                    caption: 'Walang nakalistang utang ngayon.',
+                  return const StatTile(
+                    label: 'Credit outstanding',
+                    value: 'None',
+                    caption: 'Nobody owes anything right now.',
                     tone: StatTone.good,
                     icon: Icons.check_circle_outline,
                   );
                 }
                 return StatTile(
-                  label: 'Utang sa labas',
+                  label: 'Credit outstanding',
                   value: Money.format(total),
                   caption: count == 1
-                      ? '1 taong may utang'
-                      : '$count katao ang may utang',
+                      ? '1 person owes money'
+                      : '$count people owe money',
                   tone: StatTone.warn,
                   icon: Icons.receipt_long,
                 );
               },
-            ),
-            const SizedBox(height: 10),
-
-            AsyncBlock<List<Product>>(
-              value: lowStock,
-              loadingHeight: 100,
-              builder: (items) => _LowStockCard(items: items),
-            ),
-            const SizedBox(height: 10),
-
-            AsyncBlock<int>(
-              value: inventoryValue,
-              loadingHeight: 92,
-              builder: (value) => StatTile(
-                label: 'Halaga ng paninda sa tindahan',
-                value: Money.format(value),
-                caption: 'Sa presyong pinuhunan, hindi sa presyong benta.',
-                icon: Icons.warehouse_outlined,
-              ),
             ),
             const SizedBox(height: 10),
 
@@ -260,31 +239,24 @@ class _TodayBlock extends StatelessWidget {
   Widget build(BuildContext context) {
     return Column(
       children: [
-        Row(
-          children: [
-            Expanded(
-              child: StatTile(
-                large: true,
-                label: 'Benta ngayon',
-                value: Money.format(summary.revenueCentavos),
-                caption: summary.saleCount == 0
-                    ? 'Wala pang benta ngayong araw.'
-                    : '${summary.saleCount} benta · '
-                        '${summary.itemCount} piraso',
-                icon: Icons.trending_up,
-              ),
-            ),
-          ],
+        StatTile(
+          large: true,
+          label: "Today's sales",
+          value: Money.format(summary.revenueCentavos),
+          caption: summary.saleCount == 0
+              ? 'No sales recorded today yet.'
+              : '${summary.saleCount} sales · ${summary.itemCount} items',
+          icon: Icons.trending_up,
         ),
         const SizedBox(height: 10),
         Row(
           children: [
             Expanded(
               child: StatTile(
-                label: 'Kita ngayon',
+                label: "Today's profit",
                 value: Money.formatShort(summary.grossProfitCentavos),
                 caption: summary.profitIsEstimate
-                    ? 'Tinatayang kita -- may paninda na walang puhunan.'
+                    ? 'Estimated — some products have no cost set.'
                     : summary.marginPercent == null
                         ? null
                         : '${summary.marginPercent!.round()}% margin',
@@ -295,12 +267,12 @@ class _TodayBlock extends StatelessWidget {
             const SizedBox(width: 10),
             Expanded(
               child: StatTile(
-                label: 'Cash na natanggap',
+                label: 'Cash received',
                 value: Money.formatShort(summary.cashCollectedCentavos),
-                caption: summary.utangPaymentsCentavos > 0
-                    ? 'Kasama ang ${Money.formatShort(summary.utangPaymentsCentavos)} '
-                        'bayad sa utang'
-                    : 'Hindi kasama ang utang.',
+                caption: summary.creditPaymentsCentavos > 0
+                    ? 'Includes ${Money.formatShort(summary.creditPaymentsCentavos)} '
+                        'paid on credit'
+                    : 'Credit sales not included.',
                 icon: Icons.payments_outlined,
               ),
             ),
@@ -333,22 +305,21 @@ class _WeekFooter extends StatelessWidget {
       children: [
         Expanded(
           child: _FooterStat(
-            label: 'Kabuuan',
+            label: 'Total',
             value: Money.formatShort(total),
           ),
         ),
         Expanded(
           child: _FooterStat(
-            label: 'Kada araw',
+            label: 'Per day',
             value: Money.formatShort(average),
           ),
         ),
         Expanded(
           child: _FooterStat(
-            label: 'Pinakamataas',
-            value: best.revenueCentavos == 0
-                ? '--'
-                : Dates.weekday(best.day),
+            label: 'Best day',
+            value:
+                best.revenueCentavos == 0 ? '--' : Dates.weekday(best.day),
           ),
         ),
       ],
@@ -400,13 +371,13 @@ class _TopProductsCard extends ConsumerWidget {
     final stats = ref.watch(topProductsProvider(period));
 
     return SectionCard(
-      title: 'Mabili ngayong linggo',
-      subtitle: 'Ayon sa halaga ng nabenta',
+      title: 'Best sellers this week',
+      subtitle: 'By value sold',
       child: AsyncBlock<List<ProductStat>>(
         value: stats,
         loadingHeight: 140,
         builder: (items) => RankedBarList(
-          emptyMessage: 'Wala pang benta ngayong linggo.',
+          emptyMessage: 'No sales this week yet.',
           rows: [
             for (final stat in items.take(5))
               RankedBarRow(
@@ -416,73 +387,6 @@ class _TopProductsCard extends ConsumerWidget {
               ),
           ],
         ),
-      ),
-    );
-  }
-}
-
-class _LowStockCard extends StatelessWidget {
-  const _LowStockCard({required this.items});
-
-  final List<Product> items;
-
-  @override
-  Widget build(BuildContext context) {
-    if (items.isEmpty) {
-      return StatTile(
-        label: 'Stock',
-        value: 'Sapat pa',
-        caption: 'Walang paninda na kailangang i-order ngayon.',
-        tone: StatTone.good,
-        icon: Icons.check_circle_outline,
-      );
-    }
-
-    return SectionCard(
-      title: 'Kailangan nang i-order',
-      subtitle: items.length == 1
-          ? '1 paninda ang mababa na'
-          : '${items.length} paninda ang mababa na',
-      child: Column(
-        children: [
-          for (final product in items.take(6))
-            Padding(
-              padding: const EdgeInsets.symmetric(vertical: 5),
-              child: Row(
-                children: [
-                  ProductAvatar(product: product, size: 34),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: Text(
-                      product.name,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ),
-                  PillTag(
-                    text: product.stock <= 0
-                        ? 'Ubos na'
-                        : '${product.stock} na lang',
-                    color: product.stock <= 0
-                        ? context.colors.danger
-                        : context.colors.warn,
-                  ),
-                ],
-              ),
-            ),
-          if (items.length > 6)
-            Padding(
-              padding: const EdgeInsets.only(top: 8),
-              child: Text(
-                '...at ${items.length - 6} pa. Tingnan sa Paninda.',
-                style: TextStyle(fontSize: 12.5, color: context.colors.muted),
-              ),
-            ),
-        ],
       ),
     );
   }
@@ -505,12 +409,11 @@ class _BackupStatusCard extends ConsumerWidget {
         final stale = days == null || days > 7;
 
         return StatTile(
-          label: 'Huling backup',
-          value: when == null ? 'Wala pa' : Dates.relativeDay(when),
+          label: 'Last backup',
+          value: when == null ? 'None yet' : Dates.relativeDay(when),
           caption: when == null
-              ? 'Gumawa ng backup sa Settings.'
-              : '${Dates.readableDay(when)} · '
-                  'awtomatiko kada buwan',
+              ? 'Make a backup in Settings.'
+              : '${Dates.readableDay(when)} · automatic every month',
           tone: stale ? StatTone.warn : StatTone.neutral,
           icon: Icons.backup_outlined,
           onTap: () => Navigator.of(context).push(

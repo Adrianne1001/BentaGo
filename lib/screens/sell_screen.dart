@@ -39,7 +39,7 @@ class _SellScreenState extends ConsumerState<SellScreen> {
           );
 
       final total = cart.totalCentavos;
-      final wasUtang = cart.paymentType == PaymentType.utang;
+      final wasCredit = cart.paymentType == PaymentType.credit;
       final customerName = cart.customerName;
 
       ref.read(cartProvider.notifier).clear();
@@ -53,12 +53,12 @@ class _SellScreenState extends ConsumerState<SellScreen> {
           SnackBar(
             duration: const Duration(seconds: 8),
             content: Text(
-              wasUtang
-                  ? 'Naitala: ${Money.format(total)} utang ni $customerName'
-                  : 'Naitala: ${Money.format(total)}',
+              wasCredit
+                  ? 'Recorded: ${Money.format(total)} on $customerName\'s tab'
+                  : 'Recorded: ${Money.format(total)}',
             ),
             action: SnackBarAction(
-              label: 'Bawiin',
+              label: 'Undo',
               onPressed: () async {
                 await ref.read(salesRepositoryProvider).voidSale(saleId);
                 ref.refreshData();
@@ -67,14 +67,14 @@ class _SellScreenState extends ConsumerState<SellScreen> {
           ),
         );
     } on Object catch (error) {
-      if (mounted) showToast(context, 'Hindi naitala: $error', isError: true);
+      if (mounted) showToast(context, 'Not saved: $error', isError: true);
     } finally {
       if (mounted) setState(() => _saving = false);
     }
   }
 
   Future<void> _pickCustomer() async {
-    final picked = await showCustomerPicker(context, ref);
+    final picked = await showCustomerPicker(context);
     if (picked == null) return;
     ref.read(cartProvider.notifier).setCustomer(picked.id, picked.name);
   }
@@ -97,7 +97,7 @@ class _SellScreenState extends ConsumerState<SellScreen> {
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
               child: AppSearchField(
-                hint: 'Hanapin ang paninda...',
+                hint: 'Search products...',
                 value: search,
                 onChanged: (value) =>
                     ref.read(productSearchProvider.notifier).state = value,
@@ -106,9 +106,8 @@ class _SellScreenState extends ConsumerState<SellScreen> {
             _CategoryStrip(
               categories: categories,
               selected: selectedCategory,
-              onSelect: (value) => ref
-                  .read(productCategoryFilterProvider.notifier)
-                  .state = value,
+              onSelect: (value) =>
+                  ref.read(productCategoryFilterProvider.notifier).state = value,
             ),
             Expanded(
               child: AsyncBlock<List<Product>>(
@@ -117,13 +116,11 @@ class _SellScreenState extends ConsumerState<SellScreen> {
                 builder: (items) {
                   if (items.isEmpty) {
                     return EmptyState(
-                      icon: Icons.inventory_2_outlined,
-                      title: search.isEmpty
-                          ? 'Wala pang paninda'
-                          : 'Walang nahanap',
+                      icon: Icons.sell_outlined,
+                      title: search.isEmpty ? 'No products yet' : 'No matches',
                       message: search.isEmpty
-                          ? 'Magdagdag ng produkto para makapagbenta.'
-                          : 'Subukan ang ibang salita, o magdagdag ng bago.',
+                          ? 'Add a product to start selling.'
+                          : 'Try a different word, or add it as a new product.',
                       action: FilledButton.icon(
                         onPressed: () => Navigator.of(context).push(
                           MaterialPageRoute<void>(
@@ -132,16 +129,15 @@ class _SellScreenState extends ConsumerState<SellScreen> {
                           ),
                         ),
                         icon: const Icon(Icons.add),
-                        label: const Text('Magdagdag ng produkto'),
+                        label: const Text('Add a product'),
                       ),
                     );
                   }
                   return _ProductGrid(
                     products: items,
                     cart: cart,
-                    onTap: (product) {
-                      ref.read(cartProvider.notifier).add(product);
-                    },
+                    onTap: (product) =>
+                        ref.read(cartProvider.notifier).add(product),
                   );
                 },
               ),
@@ -161,7 +157,7 @@ class _SellScreenState extends ConsumerState<SellScreen> {
                   ref.read(cartProvider.notifier).setQty(productId, qty),
               onPaymentChanged: (type) {
                 ref.read(cartProvider.notifier).setPaymentType(type);
-                if (type == PaymentType.utang) _pickCustomer();
+                if (type == PaymentType.credit) _pickCustomer();
               },
               onPickCustomer: _pickCustomer,
               onClear: () {
@@ -195,7 +191,7 @@ class _TodayStrip extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  'BENTA NGAYON',
+                  "TODAY'S SALES",
                   style: TextStyle(
                     fontSize: 10.5,
                     letterSpacing: 0.8,
@@ -219,7 +215,7 @@ class _TodayStrip extends StatelessWidget {
           Padding(
             padding: const EdgeInsets.only(bottom: 6),
             child: PillTag(
-              text: count == 1 ? '1 benta' : '$count na benta',
+              text: count == 1 ? '1 sale' : '$count sales',
               color: context.scheme.primary,
             ),
           ),
@@ -254,7 +250,7 @@ class _CategoryStrip extends StatelessWidget {
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
             child: ChoiceChip(
-              label: const Text('Lahat'),
+              label: const Text('All'),
               selected: selected == null,
               onSelected: (_) => onSelect(null),
             ),
@@ -265,7 +261,8 @@ class _CategoryStrip extends StatelessWidget {
               child: ChoiceChip(
                 label: Text(category),
                 selected: selected == category,
-                onSelected: (_) => onSelect(selected == category ? null : category),
+                onSelected: (_) =>
+                    onSelect(selected == category ? null : category),
               ),
             ),
         ],
@@ -289,11 +286,15 @@ class _ProductGrid extends StatelessWidget {
   Widget build(BuildContext context) {
     return GridView.builder(
       padding: const EdgeInsets.fromLTRB(12, 4, 12, 20),
+      // mainAxisExtent, not childAspectRatio: with an aspect ratio the tile
+      // height is derived from whatever column width the delegate settles on,
+      // so a narrow window silently shrinks the tile until a two-line product
+      // name overflows it. A fixed height holds at every screen width.
       gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
         maxCrossAxisExtent: 132,
         mainAxisSpacing: 8,
         crossAxisSpacing: 8,
-        childAspectRatio: 0.86,
+        mainAxisExtent: 138,
       ),
       itemCount: products.length,
       itemBuilder: (context, index) {
@@ -322,7 +323,6 @@ class _ProductTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final selected = inCart > 0;
-    final outOfStock = product.isOutOfStock;
 
     return Material(
       color: selected
@@ -361,32 +361,14 @@ class _ProductTile extends StatelessWidget {
                     ),
                   ),
                   const SizedBox(height: 3),
-                  Row(
-                    children: [
-                      Text(
-                        Money.formatShort(product.priceCentavos),
-                        style: TextStyle(
-                          fontSize: 14.5,
-                          fontWeight: FontWeight.w800,
-                          color: context.scheme.primary,
-                          fontFeatures: const [FontFeature.tabularFigures()],
-                        ),
-                      ),
-                      const Spacer(),
-                      if (product.trackStock)
-                        Text(
-                          outOfStock ? 'ubos' : '${product.stock}',
-                          style: TextStyle(
-                            fontSize: 11,
-                            fontWeight: FontWeight.w700,
-                            color: outOfStock
-                                ? context.colors.warn
-                                : product.isLowStock
-                                    ? context.colors.warn
-                                    : context.colors.muted,
-                          ),
-                        ),
-                    ],
+                  Text(
+                    Money.formatShort(product.priceCentavos),
+                    style: TextStyle(
+                      fontSize: 14.5,
+                      fontWeight: FontWeight.w800,
+                      color: context.scheme.primary,
+                      fontFeatures: const [FontFeature.tabularFigures()],
+                    ),
                   ),
                 ],
               ),
@@ -446,7 +428,7 @@ class _BasketPanel extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final needsCustomer =
-        cart.paymentType == PaymentType.utang && cart.customerId == null;
+        cart.paymentType == PaymentType.credit && cart.customerId == null;
 
     return Material(
       color: context.scheme.surface,
@@ -468,7 +450,9 @@ class _BasketPanel extends StatelessWidget {
                     ),
                     const SizedBox(width: 8),
                     Text(
-                      '${cart.itemCount} piraso',
+                      cart.itemCount == 1
+                          ? '1 item'
+                          : '${cart.itemCount} items',
                       style: TextStyle(
                         fontSize: 13,
                         fontWeight: FontWeight.w600,
@@ -478,7 +462,7 @@ class _BasketPanel extends StatelessWidget {
                     const Spacer(),
                     TextButton(
                       onPressed: onClear,
-                      child: const Text('Linisin'),
+                      child: const Text('Clear'),
                     ),
                   ],
                 ),
@@ -513,7 +497,7 @@ class _BasketPanel extends StatelessWidget {
                                 ),
                                 Text(
                                   '${Money.formatShort(line.product.priceCentavos)} '
-                                  'kada ${line.product.unitLabel}',
+                                  'per ${line.product.unitLabel}',
                                   style: TextStyle(
                                     fontSize: 11.5,
                                     color: context.colors.muted,
@@ -565,15 +549,14 @@ class _BasketPanel extends StatelessWidget {
                 ],
               ),
             ),
-            if (cart.paymentType == PaymentType.utang)
+            if (cart.paymentType == PaymentType.credit)
               Padding(
                 padding: const EdgeInsets.fromLTRB(12, 2, 12, 4),
                 child: OutlinedButton.icon(
                   onPressed: onPickCustomer,
                   style: OutlinedButton.styleFrom(
                     minimumSize: const Size(double.infinity, 46),
-                    foregroundColor:
-                        needsCustomer ? context.colors.warn : null,
+                    foregroundColor: needsCustomer ? context.colors.warn : null,
                     side: BorderSide(
                       color: needsCustomer
                           ? context.colors.warn
@@ -584,9 +567,7 @@ class _BasketPanel extends StatelessWidget {
                     needsCustomer ? Icons.person_add_alt : Icons.person,
                     size: 19,
                   ),
-                  label: Text(
-                    cart.customerName ?? 'Piliin kung sino ang umutang',
-                  ),
+                  label: Text(cart.customerName ?? 'Choose who owes this'),
                 ),
               ),
             Padding(
@@ -633,7 +614,7 @@ class _BasketPanel extends StatelessWidget {
                                 color: Colors.white,
                               ),
                             )
-                          : const Text('Tapos'),
+                          : const Text('Done'),
                     ),
                   ),
                 ],

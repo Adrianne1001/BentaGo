@@ -82,13 +82,13 @@ abstract class Dates {
 
   static DateTime parseDayKey(String key) => DateTime.parse('${key}T00:00:00');
 
-  /// "Ngayon" / "Kahapon" / the date. Used in list headers.
+  /// "Today" / "Yesterday" / the date. Used in list headers.
   static String relativeDay(DateTime d) {
     final today = startOfDay(DateTime.now());
     final target = startOfDay(d);
     final diff = today.difference(target).inDays;
-    if (diff == 0) return 'Ngayon';
-    if (diff == 1) return 'Kahapon';
+    if (diff == 0) return 'Today';
+    if (diff == 1) return 'Yesterday';
     return readableDay(d);
   }
 }

@@ -1,4 +1,4 @@
-import 'package:flutter_riverpod/flutter_riverpod.dart';
+﻿import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../data/models.dart';
 import '../data/sales_repository.dart';
@@ -34,10 +34,10 @@ class CartState {
     return 0;
   }
 
-  /// An utang sale is only valid once a customer has been chosen -- otherwise
+  /// A credit sale is only valid once a customer has been chosen -- otherwise
   /// the debt has no one attached to it.
   bool get canCheckout =>
-      isNotEmpty && (paymentType != PaymentType.utang || customerId != null);
+      isNotEmpty && (paymentType != PaymentType.credit || customerId != null);
 
   CartState copyWith({
     List<CartLine>? lines,
@@ -58,7 +58,7 @@ class CartState {
   }
 }
 
-/// The running basket on the Benta screen. Held in memory only -- an
+/// The running basket on the Sell screen. Held in memory only -- an
 /// unfinished sale is not worth persisting, and clearing it is the fastest way
 /// to recover from a mis-tap.
 class CartController extends StateNotifier<CartState> {
@@ -108,10 +108,10 @@ class CartController extends StateNotifier<CartState> {
   }
 
   void setPaymentType(PaymentType type) {
-    if (type == PaymentType.utang) {
+    if (type == PaymentType.credit) {
       state = state.copyWith(paymentType: type);
     } else {
-      // Dropping out of utang clears the customer so a stale name cannot ride
+      // Dropping out of credit clears the customer so a stale name cannot ride
       // along on a cash sale.
       state = state.copyWith(paymentType: type, clearCustomer: true);
     }

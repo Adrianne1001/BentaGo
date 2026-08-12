@@ -60,7 +60,7 @@ class BarChartView extends StatelessWidget {
         height: height,
         child: Center(
           child: Text(
-            'Wala pang datos',
+            'No data yet',
             style: TextStyle(color: context.colors.muted),
           ),
         ),
@@ -407,7 +407,7 @@ class RankedBarList extends StatelessWidget {
   const RankedBarList({
     super.key,
     required this.rows,
-    this.emptyMessage = 'Wala pang datos',
+    this.emptyMessage = 'No data yet',
   });
 
   final List<RankedBarRow> rows;

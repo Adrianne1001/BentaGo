@@ -4,12 +4,6 @@ enum PeriodKind { day, week, month }
 
 extension PeriodKindLabel on PeriodKind {
   String get label => switch (this) {
-        PeriodKind.day => 'Araw',
-        PeriodKind.week => 'Linggo',
-        PeriodKind.month => 'Buwan',
-      };
-
-  String get englishLabel => switch (this) {
         PeriodKind.day => 'Day',
         PeriodKind.week => 'Week',
         PeriodKind.month => 'Month',
@@ -59,7 +53,15 @@ class Period {
           Period.of(kind, DateTime(start.year, start.month + steps)),
       };
 
-  Period withKind(PeriodKind next) => Period.of(next, start);
+  /// Narrowing from a wider period anchors on **today** when today is inside
+  /// the current range, not on the range's first day. Switching Buwan to Araw
+  /// while looking at this month should land on today's sales -- landing on the
+  /// 1st shows an empty screen and reads as data loss.
+  ///
+  /// For a period that does not contain today (browsing last month), the start
+  /// is the only sensible anchor.
+  Period withKind(PeriodKind next) =>
+      Period.of(next, containsToday ? DateTime.now() : start);
 
   /// The equivalent stretch immediately before this one, for "vs last period".
   Period get previous => shift(-1);
@@ -89,8 +91,8 @@ class Period {
 
   String get subLabel => switch (kind) {
         PeriodKind.day => Dates.readableDay(start),
-        PeriodKind.week => 'Linggo ng ${Dates.readableDay(start)}',
-        PeriodKind.month => '$dayCount araw',
+        PeriodKind.week => 'Week of ${Dates.readableDay(start)}',
+        PeriodKind.month => '$dayCount days',
       };
 
   @override

@@ -56,16 +56,14 @@ class _SalesTableScreenState extends ConsumerState<SalesTableScreen> {
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Talaan ng benta'),
+        title: const Text('Sales records'),
         actions: [
           PopupMenuButton<String>(
             icon: const Icon(Icons.more_vert),
             onSelected: (value) {
               switch (value) {
                 case 'voided':
-                  _update(
-                    (q) => q.copyWith(includeVoided: !q.includeVoided),
-                  );
+                  _update((q) => q.copyWith(includeVoided: !q.includeVoided));
                 case 'amount':
                   _update((q) => q.copyWith(orderBy: 'total_centavos DESC'));
                 case 'recent':
@@ -78,20 +76,20 @@ class _SalesTableScreenState extends ConsumerState<SalesTableScreen> {
               CheckedPopupMenuItem<String>(
                 value: 'voided',
                 checked: query.includeVoided,
-                child: const Text('Isama ang binawi'),
+                child: const Text('Include cancelled'),
               ),
               const PopupMenuDivider(),
               const PopupMenuItem<String>(
                 value: 'recent',
-                child: Text('Pinakabago sa taas'),
+                child: Text('Newest first'),
               ),
               const PopupMenuItem<String>(
                 value: 'oldest',
-                child: Text('Pinakaluma sa taas'),
+                child: Text('Oldest first'),
               ),
               const PopupMenuItem<String>(
                 value: 'amount',
-                child: Text('Pinakamalaki sa taas'),
+                child: Text('Largest first'),
               ),
             ],
           ),
@@ -102,7 +100,7 @@ class _SalesTableScreenState extends ConsumerState<SalesTableScreen> {
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
             child: AppSearchField(
-              hint: 'Hanapin: paninda, pangalan, o numero',
+              hint: 'Search product, name, or number',
               value: query.search,
               onChanged: (value) => _update((q) => q.copyWith(search: value)),
             ),
@@ -117,17 +115,15 @@ class _SalesTableScreenState extends ConsumerState<SalesTableScreen> {
                 if (rows.isEmpty) {
                   return const EmptyState(
                     icon: Icons.receipt_long_outlined,
-                    title: 'Walang benta na tumutugma',
-                    message: 'Baguhin ang filter o ang panahon sa taas.',
+                    title: 'No matching sales',
+                    message: 'Change the filter or the period above.',
                   );
                 }
                 return Column(
                   children: [
                     _TableFooter(rows: rows),
                     const Divider(height: 1),
-                    Expanded(
-                      child: _SalesTable(rows: rows, onTap: _openSale),
-                    ),
+                    Expanded(child: _SalesTable(rows: rows, onTap: _openSale)),
                   ],
                 );
               },
@@ -158,7 +154,7 @@ class _FilterRow extends StatelessWidget {
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 5),
             child: ChoiceChip(
-              label: Text(period == null ? 'Lahat ng panahon' : period.label),
+              label: Text(period == null ? 'All time' : period.label),
               selected: period != null,
               avatar: const Icon(Icons.calendar_today, size: 15),
               onSelected: (_) {
@@ -181,15 +177,16 @@ class _FilterRow extends StatelessWidget {
                 child: ChoiceChip(
                   label: Text(kind.label),
                   selected: period.kind == kind,
-                  onSelected: (_) =>
-                      onUpdate((q) => q.copyWith(period: period.withKind(kind))),
+                  onSelected: (_) => onUpdate(
+                    (q) => q.copyWith(period: period.withKind(kind)),
+                  ),
                 ),
               ),
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 5),
               child: IconButton(
                 icon: const Icon(Icons.chevron_left, size: 20),
-                tooltip: 'Nauna',
+                tooltip: 'Previous',
                 onPressed: () =>
                     onUpdate((q) => q.copyWith(period: period.shift(-1))),
               ),
@@ -198,7 +195,7 @@ class _FilterRow extends StatelessWidget {
               padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 5),
               child: IconButton(
                 icon: const Icon(Icons.chevron_right, size: 20),
-                tooltip: 'Susunod',
+                tooltip: 'Next',
                 onPressed: period.containsToday
                     ? null
                     : () =>
@@ -241,21 +238,13 @@ class _TableFooter extends StatelessWidget {
       padding: const EdgeInsets.fromLTRB(16, 10, 16, 10),
       child: Row(
         children: [
+          Expanded(child: _MiniStat(label: 'Count', value: '${live.length}')),
           Expanded(
-            child: _MiniStat(
-              label: 'Bilang',
-              value: '${live.length}',
-            ),
+            child: _MiniStat(label: 'Total', value: Money.formatShort(total)),
           ),
           Expanded(
             child: _MiniStat(
-              label: 'Kabuuan',
-              value: Money.formatShort(total),
-            ),
-          ),
-          Expanded(
-            child: _MiniStat(
-              label: 'Kita',
+              label: 'Profit',
               value: Money.formatShort(profit),
               color: context.colors.good,
             ),
@@ -327,13 +316,13 @@ class _SalesTable extends StatelessWidget {
           horizontalMargin: 16,
           columns: const [
             DataColumn(label: Text('#')),
-            DataColumn(label: Text('PETSA')),
-            DataColumn(label: Text('ORAS')),
-            DataColumn(label: Text('PC'), numeric: true),
-            DataColumn(label: Text('BAYAD')),
+            DataColumn(label: Text('DATE')),
+            DataColumn(label: Text('TIME')),
+            DataColumn(label: Text('QTY'), numeric: true),
+            DataColumn(label: Text('PAID')),
             DataColumn(label: Text('CUSTOMER')),
             DataColumn(label: Text('TOTAL'), numeric: true),
-            DataColumn(label: Text('KITA'), numeric: true),
+            DataColumn(label: Text('PROFIT'), numeric: true),
           ],
           rows: [
             for (final sale in rows)
@@ -421,7 +410,7 @@ class _SaleDetailSheet extends ConsumerWidget {
         if (data == null) {
           return const Padding(
             padding: EdgeInsets.all(32),
-            child: Text('Wala na ang bentang ito.'),
+            child: Text('This sale no longer exists.'),
           );
         }
 
@@ -438,7 +427,7 @@ class _SaleDetailSheet extends ConsumerWidget {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
-                            'Benta #${data.id}',
+                            'Sale #${data.id}',
                             style: const TextStyle(
                               fontSize: 18,
                               fontWeight: FontWeight.w700,
@@ -465,7 +454,7 @@ class _SaleDetailSheet extends ConsumerWidget {
                   Padding(
                     padding: const EdgeInsets.only(top: 10),
                     child: PillTag(
-                      text: 'Binawi ang bentang ito',
+                      text: 'This sale was cancelled',
                       color: context.colors.danger,
                       icon: Icons.undo,
                     ),
@@ -517,8 +506,8 @@ class _SaleDetailSheet extends ConsumerWidget {
                                 ),
                               ),
                               Text(
-                                '${Money.format(item.unitPriceCentavos)} kada isa'
-                                '${item.unitCostCentavos > 0 ? ' · puhunan ${Money.format(item.unitCostCentavos)}' : ''}',
+                                '${Money.format(item.unitPriceCentavos)} each'
+                                '${item.unitCostCentavos > 0 ? ' · cost ${Money.format(item.unitCostCentavos)}' : ''}',
                                 style: TextStyle(
                                   fontSize: 12,
                                   color: context.colors.muted,
@@ -567,7 +556,7 @@ class _SaleDetailSheet extends ConsumerWidget {
                   children: [
                     Expanded(
                       child: Text(
-                        'Tinatayang kita',
+                        'Estimated profit',
                         style: TextStyle(
                           fontSize: 12.5,
                           color: context.colors.muted,
@@ -597,16 +586,17 @@ class _SaleDetailSheet extends ConsumerWidget {
                       ),
                     ),
                     icon: const Icon(Icons.undo, size: 19),
-                    label: const Text('Bawiin ang bentang ito'),
+                    label: const Text('Cancel this sale'),
                     onPressed: () async {
                       final ok = await confirmDestructive(
                         context,
-                        title: 'Bawiin ang benta #${data.id}?',
-                        message:
-                            'Ibabalik ang stock, at kung utang ito, aalisin '
-                            'sa listahan ng customer. Mananatili ang tala '
-                            'bilang binawi.',
-                        confirmLabel: 'Bawiin',
+                        title: 'Cancel sale #${data.id}?',
+                        message: data.paymentType == PaymentType.credit
+                            ? 'It will be taken off the customer\'s credit. '
+                                'The record stays, marked cancelled.'
+                            : 'The record stays, marked cancelled, and stops '
+                                'counting towards any total.',
+                        confirmLabel: 'Cancel sale',
                       );
                       if (!ok) return;
 

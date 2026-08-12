@@ -1,6 +1,3 @@
-import 'dart:io';
-
-import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:share_plus/share_plus.dart';
@@ -47,17 +44,16 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         await Share.shareXFiles(
           files,
           subject: 'BentaGo backup — ${backup.name}',
-          text: 'Backup ng BentaGo mula ${Dates.readableDay(backup.createdAt)}.',
+          text: 'BentaGo backup from ${Dates.readableDay(backup.createdAt)}.',
         );
       });
 
   Future<void> _deleteBackup(BackupFile backup) => _run(() async {
         final ok = await confirmDestructive(
           context,
-          title: 'Burahin ang backup na ito?',
-          message: '${backup.name}\n\n'
-              'Hindi ito maibabalik kapag nabura.',
-          confirmLabel: 'Burahin',
+          title: 'Delete this backup?',
+          message: '${backup.name}\n\nIt cannot be recovered once deleted.',
+          confirmLabel: 'Delete',
         );
         if (!ok) return;
 
@@ -65,30 +61,45 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         final csv = backup.csv;
         if (csv != null && await csv.exists()) await csv.delete();
         ref.refreshData();
-        if (mounted) showToast(context, 'Nabura ang backup');
+        if (mounted) showToast(context, 'Backup deleted');
       });
 
   Future<void> _restore() => _run(() async {
-        final picked = await FilePicker.platform.pickFiles(
-          dialogTitle: 'Pumili ng BentaGo backup (.db)',
+        final available =
+            await ref.read(backupServiceProvider).listRestorable();
+
+        if (!mounted) return;
+        if (available.isEmpty) {
+          showToast(
+            context,
+            'No backup files found in the BentaGo folder.',
+            isError: true,
+          );
+          return;
+        }
+
+        final chosen = await showModalBottomSheet<BackupFile>(
+          context: context,
+          useSafeArea: true,
+          builder: (sheetContext) => _RestorePicker(backups: available),
         );
-        final path = picked?.files.single.path;
-        if (path == null) return;
+        if (chosen == null) return;
 
         if (!mounted) return;
         final ok = await confirmDestructive(
           context,
-          title: 'Palitan ang lahat ng datos?',
-          message:
-              'Papalitan ng backup na ito ang bawat benta, paninda at utang na '
-              'nasa app ngayon.\n\nItatabi muna ang kasalukuyang datos sa '
-              'folder na "bago-i-restore" kung sakaling kailanganin.',
-          confirmLabel: 'Ituloy ang restore',
+          title: 'Replace all data?',
+          message: 'Restoring "${chosen.name}" will replace every sale, '
+              'product and credit record currently in the app.\n\nThe current '
+              'data is copied aside into the "before-restore" folder first, '
+              'just in case.',
+          confirmLabel: 'Restore',
         );
         if (!ok) return;
 
-        final result =
-            await ref.read(backupServiceProvider).restoreFrom(File(path));
+        final result = await ref
+            .read(backupServiceProvider)
+            .restoreFrom(chosen.database);
 
         if (!mounted) return;
         if (!result.ok) {
@@ -103,15 +114,15 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           context: context,
           barrierDismissible: false,
           builder: (context) => AlertDialog(
-            title: const Text('Tapos na ang restore'),
+            title: const Text('Restore finished'),
             content: const Text(
-              'Isara nang buo ang BentaGo at buksan muli para makita ang '
-              'naibalik na datos.',
+              'Close BentaGo completely and open it again to see the '
+              'restored data.',
             ),
             actions: [
               FilledButton(
                 onPressed: () => Navigator.pop(context),
-                child: const Text('Naintindihan'),
+                child: const Text('Got it'),
               ),
             ],
           ),
@@ -124,7 +135,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         final file = await service.exportCsvTo(dir);
         await Share.shareXFiles(
           [XFile(file.path)],
-          subject: 'BentaGo — talaan ng benta',
+          subject: 'BentaGo — sales records',
         );
       });
 
@@ -147,10 +158,10 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   when == null || DateTime.now().difference(when).inDays > 7;
               return StatTile(
                 large: true,
-                label: 'Huling backup',
-                value: when == null ? 'Wala pa' : Dates.relativeDay(when),
+                label: 'Last backup',
+                value: when == null ? 'None yet' : Dates.relativeDay(when),
                 caption: when == null
-                    ? 'Wala pang naitalang backup sa telepono.'
+                    ? 'No backup saved on this device yet.'
                     : Dates.readableDay(when),
                 tone: stale ? StatTone.warn : StatTone.good,
                 icon: Icons.backup_outlined,
@@ -165,7 +176,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 child: FilledButton.icon(
                   onPressed: _working ? null : _createBackup,
                   icon: const Icon(Icons.save_alt, size: 20),
-                  label: const Text('Backup ngayon'),
+                  label: const Text('Back up now'),
                 ),
               ),
               const SizedBox(width: 10),
@@ -173,7 +184,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 child: OutlinedButton.icon(
                   onPressed: _working ? null : _exportCsv,
                   icon: const Icon(Icons.ios_share, size: 19),
-                  label: const Text('I-share (CSV)'),
+                  label: const Text('Share CSV'),
                 ),
               ),
             ],
@@ -181,30 +192,31 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           const SizedBox(height: 16),
 
           SectionCard(
-            title: 'Paano gumagana ang backup',
+            title: 'How backups work',
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 const _BulletLine(
                   icon: Icons.event_repeat,
-                  text: 'Awtomatikong gumagawa ng kopya isang beses kada '
-                      'buwan, sa unang pagbukas ng app sa buwang iyon. '
-                      'Iniingatan ang huling 12 buwan.',
+                  text: 'A copy is made automatically once a month, the first '
+                      'time the app is opened that month. The last 12 months '
+                      'are kept.',
                 ),
                 const SizedBox(height: 10),
                 const _BulletLine(
                   icon: Icons.folder_outlined,
-                  text: 'Nasa loob ng folder ng app ang mga kopya, kaya '
-                      'walang permission na kailangan at makikita rin ito sa '
-                      'file manager.',
+                  text: 'Copies live inside the app\'s own folder, so no '
+                      'permission is needed and they are still visible from '
+                      'any file manager.',
                 ),
                 const SizedBox(height: 10),
                 _BulletLine(
                   icon: Icons.warning_amber_outlined,
                   tone: context.colors.warn,
-                  text: 'Mawawala ang folder kapag na-uninstall ang app o '
-                      'nawala ang telepono. Kaya kada buwan, i-share ang '
-                      'backup sa sarili mo sa Messenger o Drive.',
+                  text: 'The folder is deleted if the app is uninstalled, and '
+                      'it goes with the phone if the phone does. So once a '
+                      'month, share the backup to yourself on Messenger or '
+                      'Drive.',
                 ),
                 const SizedBox(height: 14),
                 AsyncBlock<String>(
@@ -238,8 +250,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           const SizedBox(height: 12),
 
           SectionCard(
-            title: 'Mga naka-save na backup',
-            subtitle: 'Pindutin para i-share o burahin',
+            title: 'Saved backups',
+            subtitle: 'Tap to share or delete',
             child: AsyncBlock<List<BackupFile>>(
               value: backups,
               loadingHeight: 120,
@@ -249,7 +261,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                     padding: const EdgeInsets.symmetric(vertical: 20),
                     child: Center(
                       child: Text(
-                        'Wala pang backup.',
+                        'No backups yet.',
                         style: TextStyle(color: context.colors.muted),
                       ),
                     ),
@@ -291,7 +303,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                         ),
                         subtitle: Text(
                           '${backup.kind.label} · ${backup.sizeLabel}'
-                          '${backup.csv != null ? ' · may CSV' : ''}',
+                          '${backup.csv != null ? ' · with CSV' : ''}',
                           style: TextStyle(
                             fontSize: 12,
                             color: context.colors.muted,
@@ -302,7 +314,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                           children: [
                             IconButton(
                               icon: const Icon(Icons.ios_share, size: 20),
-                              tooltip: 'I-share',
+                              tooltip: 'Share',
                               onPressed:
                                   _working ? null : () => _shareBackup(backup),
                             ),
@@ -312,9 +324,10 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                                 size: 20,
                                 color: context.colors.muted,
                               ),
-                              tooltip: 'Burahin',
-                              onPressed:
-                                  _working ? null : () => _deleteBackup(backup),
+                              tooltip: 'Delete',
+                              onPressed: _working
+                                  ? null
+                                  : () => _deleteBackup(backup),
                             ),
                           ],
                         ),
@@ -327,17 +340,27 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           const SizedBox(height: 12),
 
           SectionCard(
-            title: 'Ibalik ang datos',
-            subtitle: 'Mula sa backup file',
+            title: 'Restore data',
+            subtitle: 'From a backup file',
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  'Gamitin ito kung napalitan ng bagong telepono, o kung may '
-                  'nawalang datos. Papalitan nito ang lahat ng nasa app '
-                  'ngayon.',
+                  'Use this after moving to a new phone, or if data has gone '
+                  'missing. It replaces everything currently in the app.',
                   style: TextStyle(
                     fontSize: 13.5,
+                    height: 1.45,
+                    color: context.colors.muted,
+                  ),
+                ),
+                const SizedBox(height: 10),
+                Text(
+                  'Restoring a backup from somewhere else? Copy its .db file '
+                  'into the folder shown above using any file manager, then '
+                  'it will appear in this list.',
+                  style: TextStyle(
+                    fontSize: 12.5,
                     height: 1.45,
                     color: context.colors.muted,
                   ),
@@ -353,7 +376,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   ),
                   onPressed: _working ? null : _restore,
                   icon: const Icon(Icons.restore, size: 20),
-                  label: const Text('Pumili ng backup file'),
+                  label: const Text('Choose a backup to restore'),
                 ),
               ],
             ),
@@ -369,8 +392,97 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           const SizedBox(height: 4),
           Center(
             child: Text(
-              'Gumagana kahit walang internet.',
+              'Works with no internet connection.',
               style: TextStyle(fontSize: 12, color: context.colors.muted),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Lists every backup found on the device so one can be picked for restore.
+/// Replaces a system file browser, which asked a non-technical user to navigate
+/// to an app-scoped storage path they would never find on their own.
+class _RestorePicker extends StatelessWidget {
+  const _RestorePicker({required this.backups});
+
+  final List<BackupFile> backups;
+
+  @override
+  Widget build(BuildContext context) {
+    return SafeArea(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 4),
+            child: Row(
+              children: [
+                const Expanded(
+                  child: Text(
+                    'Choose a backup',
+                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
+                  ),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.close),
+                  tooltip: 'Close',
+                  onPressed: () => Navigator.pop(context),
+                ),
+              ],
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
+            child: Text(
+              'Newest first. The date is when the backup was written.',
+              style: TextStyle(fontSize: 12.5, color: context.colors.muted),
+            ),
+          ),
+          const Divider(height: 1),
+          Flexible(
+            child: ListView.separated(
+              shrinkWrap: true,
+              itemCount: backups.length,
+              separatorBuilder: (_, __) => const Divider(height: 1),
+              itemBuilder: (context, index) {
+                final backup = backups[index];
+                return ListTile(
+                  leading: Container(
+                    width: 40,
+                    height: 40,
+                    alignment: Alignment.center,
+                    decoration: BoxDecoration(
+                      color: context.scheme.primary.withValues(alpha: 0.12),
+                      borderRadius: BorderRadius.circular(11),
+                    ),
+                    child: Icon(
+                      Icons.restore,
+                      size: 19,
+                      color: context.scheme.primary,
+                    ),
+                  ),
+                  title: Text(
+                    Dates.readableDay(backup.createdAt),
+                    style: const TextStyle(
+                      fontSize: 14.5,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  subtitle: Text(
+                    '${backup.kind.label} · ${backup.sizeLabel} · '
+                    '${Dates.time(backup.createdAt)}',
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: context.colors.muted,
+                    ),
+                  ),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () => Navigator.pop(context, backup),
+                );
+              },
             ),
           ),
         ],
