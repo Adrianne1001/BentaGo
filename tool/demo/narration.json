@@ -1,0 +1,93 @@
+{
+  "_comment": [
+    "The demo script. Edit the prose here and re-run tool\\demo\\make-demo.ps1 --",
+    "each beat's narration is spoken by edge-tts, timed, and the app is then held",
+    "on that beat for exactly as long as the voice takes. Beat ids must match the",
+    "ones in integration_test/demo_flow.dart.",
+    "",
+    "'caption' is the line burned onto the video beside the phone. Keep it to a",
+    "few words; it is a chapter heading, not a subtitle of the narration.",
+    "",
+    "Figures are deliberately absent from the prose: the seeded data is fixed, but",
+    "quoting a peso amount here means editing it whenever the seed changes."
+  ],
+
+  "voice": "en-PH-RosaNeural",
+  "rate": "-4%",
+  "pitch": "+0Hz",
+
+  "title": {
+    "heading": "BentaGo",
+    "subheading": "Sales tracking for a sari-sari store",
+    "footer": "Works fully offline  ·  No account  ·  One phone"
+  },
+
+  "end": {
+    "heading": "BentaGo",
+    "subheading": "Everything stays on the phone.",
+    "footer": "No account, no signal, no monthly fee."
+  },
+
+  "beats": [
+    {
+      "id": "intro",
+      "caption": "Opens ready to sell",
+      "text": "This is BentaGo, a sales tracker built for one sari-sari store on one phone. It opens straight onto the till, because that is where almost all of the day happens. The takings so far are already at the top of the screen."
+    },
+    {
+      "id": "ringup",
+      "caption": "One tap per item",
+      "text": "Ringing up a sale is one tap per item. No barcodes to scan, no stock counts to keep straight. The basket adds up as it goes, and opening it shows every line with its own running total."
+    },
+    {
+      "id": "cash",
+      "caption": "Recorded instantly",
+      "text": "Take the cash, and the sale is recorded. Notice the day's total move at the top. There is no undo here on purpose: a stray tap over the product grid should never quietly reverse a sale that was correct."
+    },
+    {
+      "id": "utang",
+      "caption": "Utang, on the books",
+      "text": "Now the part every store actually struggles with. Utang. Choose Credit, and the app asks who is taking it. Pick the name, and the sale and the debt are written together, so a tab can never go unrecorded."
+    },
+    {
+      "id": "dashboard",
+      "caption": "Today, this week, this month",
+      "text": "The dashboard answers the question the notebook never could. Not just what came in today, but how today compares with the week and the month behind it, and how much of it was actually profit."
+    },
+    {
+      "id": "products",
+      "caption": "Cost in, margin out",
+      "text": "The price list carries what each item cost as well as what it sells for, so the app can show the margin on every line. Enter the cost once, and every report afterwards knows the difference between money taken and money earned."
+    },
+    {
+      "id": "credit",
+      "caption": "The listahan",
+      "text": "This is the credit book. Everyone who owes, sorted by how much, with the total across the whole store at the top. Open one person and you get every charge and every payment behind their balance."
+    },
+    {
+      "id": "payment",
+      "caption": "Settled in two taps",
+      "text": "When someone pays, the dialog arrives already filled in with what they owe, so settling a tab is two taps. The old entries stay exactly where they are. Nothing in this ledger is ever edited or deleted, only added to."
+    },
+    {
+      "id": "reports",
+      "caption": "Any window you like",
+      "text": "The reports read the same figures over any window you choose. Switch from a single day to the whole week and everything follows: the totals, the busiest hours, the best sellers, and what the expenses took back out."
+    },
+    {
+      "id": "records",
+      "caption": "Every transaction",
+      "text": "When a number looks wrong, this is the screen that settles it. Every transaction, filterable, and any row opens to show the exact items that made it up. A mistake gets corrected here, deliberately, rather than at the till."
+    },
+    {
+      "id": "export",
+      "caption": "Spreadsheet or PDF",
+      "text": "Any range can leave as a spreadsheet or a PDF, written to the phone and shared from there. The app also keeps a backup of its own database every month, without being asked."
+    },
+    {
+      "id": "outro",
+      "caption": "One phone, no signal needed",
+      "text": "And that is the whole app. No account, no subscription, and no internet required, because everything lives in a single database file on the phone itself."
+    }
+  ]
+}

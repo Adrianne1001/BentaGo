@@ -10,6 +10,7 @@ import 'package:bentago/data/models.dart';
 import 'package:bentago/data/product_repository.dart';
 import 'package:bentago/data/report_repository.dart';
 import 'package:bentago/data/sales_repository.dart';
+import 'package:bentago/demo/demo_seed.dart';
 import 'package:excel/excel.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
@@ -1438,6 +1439,161 @@ void main() {
 
       expect(await upgraded.db.getVersion(), AppDatabase.schemaVersion);
       await upgraded.close();
+    });
+  });
+
+  // The seeder behind the recorded demo (tool/demo/). It writes rows directly
+  // rather than through the repositories, because it has to date them into the
+  // past, so nothing else enforces the invariants for it.
+  //
+  // Worth testing despite never shipping: without these, a regression only
+  // surfaces as something wrong in a twelve-minute video.
+  group('demo seeder', () {
+    setUp(() => DemoSeeder.reset(db));
+
+    test('writes six weeks of sales, all of them live', () async {
+      final count = await sales.count();
+      expect(count, greaterThan(400));
+
+      final first = await reports.firstSaleDate();
+      expect(first, isNotNull);
+      final span = DateTime.now().difference(first!).inDays;
+      expect(span, greaterThanOrEqualTo(40));
+    });
+
+    test('every dated row agrees with its own day_key', () async {
+      for (final table in ['sales', 'ledger_entries', 'expenses']) {
+        final stamp = switch (table) {
+          'ledger_entries' => 'entered_at',
+          'expenses' => 'spent_at',
+          _ => 'sold_at',
+        };
+        final rows = await db.db.query(table, columns: [stamp, 'day_key']);
+        expect(rows, isNotEmpty, reason: '$table should have been seeded');
+
+        for (final row in rows) {
+          final at = DateTime.fromMillisecondsSinceEpoch(row[stamp] as int);
+          expect(
+            row['day_key'],
+            Dates.dayKey(at),
+            reason: '$table row stamped $at carries the wrong day_key',
+          );
+        }
+      }
+    });
+
+    test('nothing is dated into the future', () async {
+      final now = DateTime.now();
+      final rows = await db.db.rawQuery(
+        'SELECT MAX(sold_at) AS latest FROM sales',
+      );
+      final latest =
+          DateTime.fromMillisecondsSinceEpoch(rows.first['latest'] as int);
+      expect(latest.isAfter(now), isFalse,
+          reason: 'a sale stamped ahead of the clock reads as a bug on screen');
+    });
+
+    test('money is only ever whole centavos', () async {
+      // A REAL would come back as a double here. Catches a stray `/ 2` or a
+      // percentage that skipped integer division.
+      final rows = await db.db.rawQuery('''
+        SELECT total_centavos, cost_centavos FROM sales
+        UNION ALL
+        SELECT unit_price_centavos, unit_cost_centavos FROM sale_items
+      ''');
+      for (final row in rows) {
+        expect(row['total_centavos'], isA<int>());
+        expect(row['cost_centavos'], isA<int>());
+      }
+    });
+
+    test('no tab ever reads as negative at any point in its history', () async {
+      // The bug this exists for: settlements were once stamped 9am on the same
+      // day as the charges they paid off, so reading the ledger in order showed
+      // a customer in credit before they had paid.
+      final all = await customers.all();
+      expect(all, isNotEmpty);
+
+      for (final customer in all) {
+        final entries = await customers.ledger(customer.id!);
+        if (entries.isEmpty) continue;
+
+        // `ledger()` returns newest-first; walk it forwards.
+        final chronological = entries.reversed.toList();
+        var running = 0;
+        for (final entry in chronological) {
+          running += entry.amountCentavos;
+          expect(
+            running,
+            greaterThanOrEqualTo(0),
+            reason: '${customer.name} owes ${Money.format(running)} after the '
+                'entry of ${Money.format(entry.amountCentavos)} on '
+                '${entry.enteredAt} -- a tab cannot go negative',
+          );
+        }
+        // And the sum of the entries is the balance the screens show.
+        expect(running, customer.balanceCentavos);
+      }
+    });
+
+    test('somebody still owes money, or the credit screen is empty', () async {
+      expect(await customers.countWithBalance(), greaterThanOrEqualTo(1));
+      expect(await customers.totalOutstandingCentavos(), greaterThan(0));
+    });
+
+    test('one sale is voided, and it reversed a tab rather than a cash sale',
+        () async {
+      final voided = await db.db.query('sales', where: 'voided = 1');
+      expect(voided, hasLength(1), reason: 'exactly one cancelled sale');
+
+      final sale = voided.single;
+      expect(
+        PaymentTypeX.fromCode(sale['payment_type'] as String?),
+        PaymentType.credit,
+        reason: 'cancelling a cash sale leaves the ledger untouched, so it '
+            'would not demonstrate the adjusting entry',
+      );
+
+      // Reversed by appending, not by editing or deleting the charge.
+      final entries = await db.db.query(
+        'ledger_entries',
+        where: 'sale_id = ?',
+        whereArgs: [sale['id']],
+        orderBy: 'entered_at, id',
+      );
+      expect(entries, hasLength(2), reason: 'the charge and its reversal');
+      expect(entries.first['amount_centavos'], sale['total_centavos']);
+      expect(entries.last['amount_centavos'], -(sale['total_centavos'] as int));
+    });
+
+    test('the demo trades at a profit in every window it shows', () async {
+      // Seeded expenses must not double-count what sale_items already carries as
+      // unit_cost_centavos: gross profit has taken the cost of goods off once,
+      // and net profit subtracts expenses from that. Booking the restocking
+      // spend as an expense too showed the store losing money every week.
+      for (final kind in [PeriodKind.week, PeriodKind.month]) {
+        final summary =
+            await reports.summary(Period.of(kind, DateTime.now()));
+        expect(
+          summary.netProfitCentavos,
+          greaterThan(0),
+          reason: 'net profit over the ${kind.label.toLowerCase()} is '
+              '${Money.format(summary.netProfitCentavos)} -- a demo should not '
+              'open on a loss',
+        );
+        expect(summary.expensesCentavos, lessThan(summary.grossProfitCentavos));
+      }
+    });
+
+    test('running it twice leaves the same data, not twice the data', () async {
+      final before = await sales.count();
+      final owedBefore = await customers.totalOutstandingCentavos();
+
+      await DemoSeeder.reset(db);
+
+      expect(await sales.count(), before);
+      expect(await customers.totalOutstandingCentavos(), owedBefore);
+      expect((await customers.all()).length, DemoSeeder.customerCount);
     });
   });
 }

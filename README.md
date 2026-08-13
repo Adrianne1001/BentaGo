@@ -302,6 +302,31 @@ when that lands, upgrade share_plus to a built-in-Kotlin version.
 
 ---
 
+## The demo video
+
+A narrated walkthrough of the Android app builds itself from one command:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File tool\demo\setup.ps1      # once, ~1.5 GB
+powershell -ExecutionPolicy Bypass -File tool\demo\make-demo.ps1  # ~12 min
+```
+
+That boots an emulator, drives the app through twelve scripted beats, records it,
+speaks the narration, and renders `dist\BentaGo-Demo-<version>.mp4` — 1920x1080,
+the phone screen inset in a bezel with captions and a title card. No video editor
+and no manual alignment: the narration is synthesised *first*, and the app is
+told to hold each beat for exactly as long as its voice clip runs.
+
+Nothing about it ships in the app. Its one hook is `DemoSeeder.reset()`, which
+writes six weeks of fixed demo trading and is guarded by a
+`bool.fromEnvironment` constant, so a normal build tree-shakes it away.
+
+Edit the words in [tool/demo/narration.json](tool/demo/narration.json), the
+actions in [integration_test/demo_flow.dart](integration_test/demo_flow.dart),
+and see [tool/demo/README.md](tool/demo/README.md) for how the two stay in sync.
+
+---
+
 ## Things deliberately left out
 
 - **Inventory / stock counts** — removed on request. No stock column, no

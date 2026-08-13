@@ -28,7 +28,37 @@ dart run tool/inspect_db.dart path\to\backup.db # or of a backup, read-only
 # Rebuild every installable in dist/ (~5 min, gates on analyze + test)
 powershell -ExecutionPolicy Bypass -File tool\release.ps1
 powershell -ExecutionPolicy Bypass -File tool\release.ps1 -BumpBuild
+
+# Narrated demo video, end to end: emulator -> driven app -> TTS -> MP4
+powershell -ExecutionPolicy Bypass -File tool\demo\setup.ps1       # once, ~1.5 GB
+powershell -ExecutionPolicy Bypass -File tool\demo\make-demo.ps1   # ~7 min
+powershell -ExecutionPolicy Bypass -File tool\demo\make-demo.ps1 -Orientation both
+powershell -ExecutionPolicy Bypass -File tool\demo\make-demo.ps1 -SkipNarration -SkipRecording
+
+# Re-cut an existing take -- no emulator, no rebuild, no re-recording
+powershell -ExecutionPolicy Bypass -File tool\demo\edit.ps1 -Orientation portrait
+powershell -ExecutionPolicy Bypass -File tool\demo\contact-sheet.ps1   # one frame per beat, to check a take
 ```
+
+The demo pipeline lives in [tool/demo/](tool/demo/) and is documented in
+[tool/demo/README.md](tool/demo/README.md) — read that before touching it, in
+particular the note on why narration is generated *before* the recording and why
+the capture start is anchored on scrcpy's log line rather than the video's
+duration. Its one hook into the app is `DemoSeeder.reset()` in
+[lib/demo/demo_seed.dart](lib/demo/demo_seed.dart), called from `main()` behind
+`kDemoMode` (a `bool.fromEnvironment` constant, so it tree-shakes out of every
+normal build) and deliberately *after* the monthly backup, because it deletes
+every sale, tab and expense in the database. Beat ids must stay in step between
+[tool/demo/narration.json](tool/demo/narration.json) and
+[integration_test/demo_flow.dart](integration_test/demo_flow.dart).
+
+The seeder writes rows directly rather than through the repositories (it needs
+past dates, and a repository stamps `now`), so it upholds the invariants above by
+hand and the `demo seeder` group in
+[test/database_test.dart](test/database_test.dart) is what holds it to them —
+notably that no tab ever reads as negative and that every window shows a profit.
+Without those, a regression only surfaces as something wrong in a 12-minute
+video.
 
 **Any code change that lands on `main` must be followed by `tool\release.ps1`.**
 The CI workflow ([.github/workflows/release.yml](.github/workflows/release.yml))

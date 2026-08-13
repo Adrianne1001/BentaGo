@@ -50,5 +50,11 @@ dev_dependencies:
     sdk: flutter
   flutter_lints: ^4.0.0
 
+  # Drives the recorded product demo (tool/demo/). Test-only and bundled with
+  # the SDK, so it adds nothing to the shipped APK and no Gradle plugin to the
+  # Android build.
+  integration_test:
+    sdk: flutter
+
 flutter:
   uses-material-design: true
