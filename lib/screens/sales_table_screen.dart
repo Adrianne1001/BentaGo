@@ -406,7 +406,7 @@ Future<void> _editLine(
 ) async {
   final result = await showDialog<int>(
     context: context,
-    builder: (_) => _LineEditDialog(item: item, isOnlyLine: sale.items.length == 1),
+    builder: (_) => SaleLineEditorDialog(sale: sale, item: item),
   );
   if (result == null || result == item.qty || !context.mounted) return;
 
@@ -415,13 +415,14 @@ Future<void> _editLine(
       context,
       title: sale.items.length == 1
           ? 'Cancel sale #${sale.id}?'
-          : 'Take ${item.productName} off sale #${sale.id}?',
+          : 'Remove ${item.productName} from sale #${sale.id}?',
       message: sale.items.length == 1
           ? 'It is the only item on this sale, so the whole sale is cancelled. '
               'The record stays, marked cancelled.'
-          : 'The sale total drops by ${Money.format(item.lineTotalCentavos)}.'
+          : 'The sale total drops by ${Money.format(item.lineTotalCentavos)}, '
+              'to ${Money.format(sale.totalCentavos - item.lineTotalCentavos)}.'
               '${sale.paymentType == PaymentType.credit ? ' The customer\'s credit is reduced to match.' : ''}',
-      confirmLabel: sale.items.length == 1 ? 'Cancel sale' : 'Take it off',
+      confirmLabel: sale.items.length == 1 ? 'Cancel sale' : 'Remove item',
     );
     if (!ok) return;
   }
@@ -457,8 +458,11 @@ class _SaleLineRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final row = Padding(
-      padding: EdgeInsets.symmetric(vertical: 6, horizontal: editable ? 8 : 0),
+    // Tall enough to hit reliably with a thumb while a customer waits, which
+    // the old 6px padding was not.
+    final row = Container(
+      constraints: const BoxConstraints(minHeight: 52),
+      padding: EdgeInsets.symmetric(vertical: 8, horizontal: editable ? 8 : 0),
       child: Row(
         children: [
           SizedBox(
@@ -501,13 +505,24 @@ class _SaleLineRow extends StatelessWidget {
               fontFeatures: [FontFeature.tabularFigures()],
             ),
           ),
+          // Reads as a button rather than as decoration -- the muted 16px
+          // pencil this replaces was easy to miss entirely.
           if (editable)
             Padding(
-              padding: const EdgeInsets.only(left: 6),
-              child: Icon(
-                Icons.edit_outlined,
-                size: 16,
-                color: context.colors.muted,
+              padding: const EdgeInsets.only(left: 10),
+              child: Container(
+                width: 32,
+                height: 32,
+                decoration: BoxDecoration(
+                  color: context.scheme.primary.withValues(alpha: 0.10),
+                  borderRadius: BorderRadius.circular(9),
+                ),
+                alignment: Alignment.center,
+                child: Icon(
+                  Icons.edit_outlined,
+                  size: 17,
+                  color: context.scheme.primary,
+                ),
               ),
             ),
         ],
@@ -523,34 +538,114 @@ class _SaleLineRow extends StatelessWidget {
   }
 }
 
+/// One row of the dialog's arithmetic: a label, the peso figure, and -- once the
+/// stepper has moved -- what the figure used to be.
+class _EditAmountRow extends StatelessWidget {
+  const _EditAmountRow({
+    required this.label,
+    required this.centavos,
+    this.wasCentavos,
+    this.emphasise = false,
+  });
+
+  final String label;
+  final int centavos;
+  final int? wasCentavos;
+  final bool emphasise;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.end,
+      children: [
+        Expanded(
+          child: Text(
+            label,
+            style: TextStyle(
+              fontSize: emphasise ? 14 : 13,
+              fontWeight: emphasise ? FontWeight.w700 : FontWeight.w600,
+              color: emphasise ? null : context.colors.muted,
+            ),
+          ),
+        ),
+        if (wasCentavos != null)
+          Padding(
+            padding: const EdgeInsets.only(right: 8),
+            child: Text(
+              Money.format(wasCentavos!),
+              style: TextStyle(
+                fontSize: 12.5,
+                color: context.colors.muted,
+                decoration: TextDecoration.lineThrough,
+                fontFeatures: const [FontFeature.tabularFigures()],
+              ),
+            ),
+          ),
+        Text(
+          Money.format(centavos),
+          style: TextStyle(
+            fontSize: emphasise ? 19 : 15,
+            fontWeight: emphasise ? FontWeight.w800 : FontWeight.w700,
+            fontFeatures: const [FontFeature.tabularFigures()],
+          ),
+        ),
+      ],
+    );
+  }
+}
+
 /// Quantity only. The unit price is shown but never editable -- it is what the
 /// item actually sold for, and a sale that can be re-priced after the fact is a
 /// sale whose history cannot be trusted.
-class _LineEditDialog extends StatefulWidget {
-  const _LineEditDialog({required this.item, required this.isOnlyLine});
+///
+/// Removal lives in the body rather than among the actions, for two reasons: it
+/// is the one irreversible thing in here and should not sit shoulder to shoulder
+/// with `Save`, and a flex widget cannot be used to push it away from `Save`
+/// either -- `actions` are laid out in an `OverflowBar`, which is not a `Flex`,
+/// so a `Spacer` there throws while the dialog is building. That is exactly the
+/// bug that made this editor unreachable.
+///
+/// Public so it can be pumped directly in a widget test: the failure it guards
+/// against is a layout-time throw, which no amount of repository testing sees.
+/// Pops the new quantity, `0` to remove the line, or null when dismissed.
+class SaleLineEditorDialog extends StatefulWidget {
+  const SaleLineEditorDialog({
+    super.key,
+    required this.sale,
+    required this.item,
+  });
 
+  final Sale sale;
   final SaleItem item;
-  final bool isOnlyLine;
 
   @override
-  State<_LineEditDialog> createState() => _LineEditDialogState();
+  State<SaleLineEditorDialog> createState() => _SaleLineEditorDialogState();
 }
 
-class _LineEditDialogState extends State<_LineEditDialog> {
+class _SaleLineEditorDialogState extends State<SaleLineEditorDialog> {
   late int _qty = widget.item.qty;
 
   @override
   Widget build(BuildContext context) {
     final item = widget.item;
-    final total = item.unitPriceCentavos * _qty;
+    final sale = widget.sale;
+    final isOnlyLine = sale.items.length == 1;
+    final changed = _qty != item.qty;
+
+    final lineTotal = item.unitPriceCentavos * _qty;
+    // What the whole sale becomes, computed the same way the repository will
+    // re-total it: this line at its recorded unit price, the others untouched.
+    final saleTotal = sale.totalCentavos - item.lineTotalCentavos + lineTotal;
 
     return AlertDialog(
       title: Text(item.productName),
       content: Column(
         mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Text(
             '${Money.format(item.unitPriceCentavos)} each · sold at this price',
+            textAlign: TextAlign.center,
             style: TextStyle(fontSize: 12.5, color: context.colors.muted),
           ),
           const SizedBox(height: 18),
@@ -561,40 +656,50 @@ class _LineEditDialogState extends State<_LineEditDialog> {
               onChanged: (value) => setState(() => _qty = value),
             ),
           ),
-          const SizedBox(height: 18),
-          Row(
-            children: [
-              const Expanded(
-                child: Text(
-                  'Line total',
-                  style: TextStyle(fontWeight: FontWeight.w600),
-                ),
+          const SizedBox(height: 20),
+          _EditAmountRow(label: 'Line total', centavos: lineTotal),
+          const SizedBox(height: 8),
+          // The number that actually matters, and the reason this dialog shows
+          // it: the old version only ever showed the line, so the effect on the
+          // sale was invisible until after it had been saved.
+          _EditAmountRow(
+            label: 'Sale total',
+            centavos: saleTotal,
+            wasCentavos: changed ? sale.totalCentavos : null,
+            emphasise: true,
+          ),
+          if (sale.paymentType == PaymentType.credit) ...[
+            const SizedBox(height: 10),
+            Text(
+              'The customer\'s credit moves with the total.',
+              style: TextStyle(fontSize: 12, color: context.colors.muted),
+            ),
+          ],
+          const Divider(height: 30),
+          OutlinedButton.icon(
+            style: OutlinedButton.styleFrom(
+              minimumSize: const Size(double.infinity, 46),
+              foregroundColor: context.colors.danger,
+              side: BorderSide(
+                color: context.colors.danger.withValues(alpha: 0.5),
               ),
-              Text(
-                Money.format(total),
-                style: const TextStyle(
-                  fontSize: 17,
-                  fontWeight: FontWeight.w800,
-                  fontFeatures: [FontFeature.tabularFigures()],
-                ),
-              ),
-            ],
+            ),
+            icon: Icon(
+              isOnlyLine ? Icons.undo : Icons.delete_outline,
+              size: 19,
+            ),
+            label: Text(isOnlyLine ? 'Cancel this sale' : 'Remove this item'),
+            onPressed: () => Navigator.pop(context, 0),
           ),
         ],
       ),
       actions: [
         TextButton(
-          onPressed: () => Navigator.pop(context, 0),
-          style: TextButton.styleFrom(foregroundColor: context.colors.danger),
-          child: Text(widget.isOnlyLine ? 'Cancel sale' : 'Take it off'),
-        ),
-        const Spacer(),
-        TextButton(
           onPressed: () => Navigator.pop(context),
           child: const Text('Back'),
         ),
         FilledButton(
-          onPressed: _qty == item.qty ? null : () => Navigator.pop(context, _qty),
+          onPressed: changed ? () => Navigator.pop(context, _qty) : null,
           child: const Text('Save'),
         ),
       ],
@@ -691,7 +796,7 @@ class _SaleDetailSheet extends ConsumerWidget {
                   Padding(
                     padding: const EdgeInsets.only(bottom: 6),
                     child: Text(
-                      'Tap an item to fix its quantity or take it off.',
+                      'Tap an item to change its quantity or remove it.',
                       style: TextStyle(
                         fontSize: 12,
                         color: context.colors.muted,
@@ -704,6 +809,34 @@ class _SaleDetailSheet extends ConsumerWidget {
                     item: item,
                     editable: !data.voided,
                     onEdit: () => _editLine(context, ref, data, item),
+                  ),
+
+                // The correction stamp _retotal writes. Without this the audit
+                // trail existed only in the database, so a total that had been
+                // corrected looked simply wrong.
+                if (data.note != null && data.note!.trim().isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 12),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Icon(
+                          Icons.history,
+                          size: 15,
+                          color: context.colors.muted,
+                        ),
+                        const SizedBox(width: 6),
+                        Expanded(
+                          child: Text(
+                            data.note!,
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: context.colors.muted,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
 
                 const Divider(height: 26),
